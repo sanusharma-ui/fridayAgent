@@ -37,12 +37,18 @@ def parse_browser_request(request):
     match = re.fullmatch(r"(?:switch to|go to|select|switch) tab (\d+)", normalized)
     if match:
         return "browser_tab", match.group(1)
-    match = re.fullmatch(r"(?:open|play) (?:search )?result (\d+)", normalized)
+    match = re.fullmatch(r"(?:open|click|play) (?:the )?(?:search )?(?:result|link) (\d+)", normalized)
     if match:
         return ("browser_play_result" if normalized.startswith("play ") else "browser_result"), match.group(1)
-    match = re.fullmatch(r"(?:open|play) (?:the )?(first|second|third) (?:search )?result", normalized)
+    match = re.fullmatch(
+        r"(?:open|click|play) (?:the )?(first|second|third) (?:search )?(?:result|link)",
+        normalized,
+    )
     if match:
         return ("browser_play_result" if normalized.startswith("play ") else "browser_result"), str({"first": 1, "second": 2, "third": 3}[match.group(1)])
+    match = re.fullmatch(r"click (?:the )?(\d+)(?:st|nd|rd|th)?(?: (?:search )?(?:result|link))?", normalized)
+    if match:
+        return "browser_result", match.group(1)
     match = re.fullmatch(r"search(?: for)? (.+)", text, re.I)
     if match:
         query = match.group(1).strip()

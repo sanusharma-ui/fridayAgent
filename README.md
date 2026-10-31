@@ -37,7 +37,7 @@ Send these requests one at a time from the desktop or your authorized Telegram c
 
 1. `Can you open YouTube for me?`
 2. `Search for relaxing piano music`
-3. `Open the first result`
+3. `Click 1` (or `click the first link`)
 4. `Pause the video`
 5. `Go back`
 6. `Scroll down`

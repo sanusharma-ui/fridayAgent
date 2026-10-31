@@ -156,6 +156,13 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(parse_browser_request("Could you scroll down for me?"), ("browser_control", "scroll_down"))
         self.assertEqual(parse_browser_request("Search for moons on Google"), ("search_web", "moons"))
         self.assertEqual(parse_browser_request("Open the second result"), ("browser_result", "2"))
+        for request, number in [
+            ("click 2", "2"),
+            ("click the 2nd link", "2"),
+            ("click result 3", "3"),
+            ("click the second result", "2"),
+        ]:
+            self.assertEqual(parse_browser_request(request), ("browser_result", number))
         self.assertEqual(parse_browser_request("Open Chrome"), ("browser_control", "new_tab"))
 
     def test_bad_model_direction_prevents_entire_plan(self):
