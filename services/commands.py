@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 from services.predefined_responses import check_predefined
+from services.friday_service import is_ai_error
 
 
 def launch_program(program):
@@ -21,9 +22,10 @@ def launch_program(program):
 
 
 class CommandRouter:
-    def __init__(self, ai_service, open_url=None, launch=None):
+    def __init__(self, ai_service, open_url=None, launch=None, browser=None):
         self.ai = ai_service
-        self.open_url = open_url or webbrowser.open
+        self.browser = browser
+        self.open_url = open_url or (browser.open_url if browser else webbrowser.open)
         self.launch = launch or launch_program
 
     def handle(self, text: str, *, allow_planning=True) -> str:
@@ -89,7 +91,7 @@ class CommandRouter:
         if match:
             name = match.group(1)
             if name == "settings":
-                self.open_url(programs[name])
+                webbrowser.open(programs[name])
             else:
                 self.launch(programs[name])
             return f"Opening {name}."
@@ -203,7 +205,7 @@ class CommandRouter:
         if not self.ai.api_key:
             return "Set FRIDAY_API_KEY in .env or your environment before creating an AI-generated PDF."
         content = self.ai.ask(f"Write the complete content for a useful document about {topic}. Include a title and clear sections. Return only the document text.")
-        if content.startswith(("Friday is unavailable:", "Friday API key was rejected.", "Friday returned", "Set FRIDAY_API_KEY")):
+        if is_ai_error(content):
             return content
         from PyQt5.QtGui import QPdfWriter, QTextDocument
         from html import escape

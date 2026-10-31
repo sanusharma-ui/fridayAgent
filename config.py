@@ -13,6 +13,15 @@ AI_ENDPOINT_URL = os.getenv(
     "AI_ENDPOINT_URL", "https://preconceptional-roland-nondisposable.ngrok-free.dev"
 ).rstrip("/")
 FRIDAY_API_KEY = os.getenv("FRIDAY_API_KEY", "")
+GROQ_ENABLED = os.getenv("GROQ_ENABLED", "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+GROQ_API_URL = os.getenv(
+    "GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions"
+).rstrip("/")
+BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", "chrome").strip().lower()
 
 # Telegram access is opt-in. Keep the token in .env, never in source control.
 TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"

@@ -13,6 +13,8 @@ python app.py
 
 The key must equal the `FRIDAY_API_KEY` stored in Colab Secrets. The app loads `.env` beside `config.py`; environment variables take precedence. The app sends `POST /chat` with `{"message": "..."}` and the `x-api-key` header, then reads the `response` field. Keep the Colab runtime and ngrok tunnel active. If the tunnel URL changes, update `AI_ENDPOINT_URL`. Never share or commit `.env` or real keys.
 
+Groq is an optional fallback when the Colab backend is unavailable. Set `GROQ_ENABLED=true` and provide `GROQ_API_KEY` in `.env`; leave `GROQ_ENABLED=false` to prevent all Groq requests. `GROQ_MODEL` defaults to `llama-3.3-70b-versatile`. Friday remains the primary backend whenever it responds successfully.
+
 Voice input uses the bundled English Vosk model and records for six seconds after **Listen** is pressed. It works offline, though English recognition can struggle with Hindi or Hinglish. Type those commands when recognition fails. **Speak replies** is optional. Microphone permission and a working input device are required.
 
 **Agent** handles typed and spoken requests. The Friday model plans supported tool calls as JSON, and the desktop app validates the tool and its arguments before running it locally. It can open apps, websites and supported files, search the web or YouTube, and create a PDF. General questions go to Friday. The Colab backend is a text generator rather than a native tool-calling API; model output may need rephrasing if it produces an invalid plan. Simple open requests also work without the backend. AI-generated text is never run as shell code. Other requests require the API key and a reachable backend described above.
@@ -26,6 +28,29 @@ You can also open installed Windows apps by their Start menu name, or say `open 
 Say `write an essay about moons` or `write a short poem about rain in Notepad`: Friday generates the requested content, saves a new UTF-8 text file in `Documents/NEO Notes`, and opens it in a new Notepad document. It does not type into or change an already-open document. For literal text, say `write exactly Hello from NEO`; the words following `exactly` are saved as given. Generated content requires the Friday backend and should be reviewed.
 
 For weather, set `OPENWEATHER_API_KEY` in the environment. The key formerly present in source should be rotated before reuse.
+
+## Chrome session controls
+
+Install the updated `requirements.txt` and have Google Chrome installed. Website commands now use a visible Chrome session managed by the assistant. The interface, status messages, examples, and AI reply instructions use English.
+
+Send these requests one at a time from the desktop or your authorized Telegram chat:
+
+1. `Can you open YouTube for me?`
+2. `Search for relaxing piano music`
+3. `Open the first result`
+4. `Pause the video`
+5. `Go back`
+6. `Scroll down`
+
+For numbered YouTube playback, say `play 2`, `play two`, or `play the second video` while on search results. The assistant checks the controlled tab's current page, opens that numbered video result, and requests playback. On an open video, `play` resumes it and `pause` pauses it. On search results, plain `play` asks you to choose a number. Playback failures are reported rather than treated as success. Numbers refer to standard video results, excluding Shorts shelves and playlists.
+
+Other controls: `scroll up`, `scroll to the top`, `scroll to the bottom`, `refresh`, `go forward`, `open a new tab`, `show tabs`, `switch to tab 2`, and `close this tab`. The sidebar also has Chrome shortcut buttons. Simple controls and searches work without Colab; more varied wording uses the AI planner.
+
+Follow-up searches use the selected controlled tab's current website: YouTube, Google, Bing, or DuckDuckGo. Say `search for astronomy on Google` or `search for astronomy on YouTube` to change sites explicitly. Numbered result opening supports YouTube videos and Google results, up to the first 20 available links. Consent dialogs or changed website layouts can prevent result selection; close the dialog and retry. Scrolling targets the page, not nested panels.
+
+The browser uses a separate temporary profile. Existing personal Chrome windows, logins, and tabs are not controlled. Use `show tabs` and `switch to tab N` to select the target; manually clicking a different tab does not change the assistant's selected tab. Desktop and Telegram share this session. Closing the app closes its controlled browser; a new app session starts without its previous logins. Arbitrary clicks, form submissions, purchases, and downloads are not implemented.
+
+`BROWSER_CHANNEL=chrome` is the default in `.env.example`. You may use `msedge` with installed Microsoft Edge, or `chromium` after running `python -m playwright install chromium`. Restart the app after changing this setting. See the [Playwright browser documentation](https://playwright.dev/python/docs/browsers). If Playwright is missing, the app shows an installation message instead of reporting that the browser action succeeded.
 
 ## Control your laptop from Telegram
 

@@ -191,7 +191,7 @@ class TelegramBridge:
             self.client.send(chat_id, "Forwarded messages are not executed. Please send your own request directly.")
             return
         if text in ("/start", "/help"):
-            self.client.send(chat_id, "Connected to your laptop agent. Send text or a voice note (up to 60 seconds).\nExamples: open YouTube; write an essay about moons; create a PDF about space.\n/screenshot — capture the laptop's primary display and send the image here\n/status — connection status\n/pause — pause new tasks\n/resume — allow new tasks\n/id — your user ID\nActions run on your laptop. Screenshots are sent as photos; other generated documents remain on the laptop.")
+            self.client.send(chat_id, "Connected to your laptop agent. Send text or a voice note (up to 60 seconds).\nExamples: open YouTube; search for piano music; open the first result; scroll down; go back; show tabs; write an essay about moons; create a PDF about space.\n/screenshot — capture the laptop's primary display and send the image here\n/status — connection status\n/pause — pause new tasks\n/resume — allow new tasks\n/id — your user ID\nActions run on your laptop. Screenshots are sent as photos; other generated documents remain on the laptop.")
             return
         if text == "/pause":
             self.paused = True

@@ -7,6 +7,9 @@ planner uses a small JSON protocol. Model output is untrusted data, never code.
 import json
 import re
 from services.notepad import NotepadWriter
+from services.browser import BrowserError
+from services.browser_commands import parse_browser_request, control_is_grounded
+from services.friday_service import is_ai_error
 
 
 class DesktopAgent:
@@ -16,11 +19,22 @@ class DesktopAgent:
         self.ai = ai
         self.router = router
         self.notepad = notepad or NotepadWriter(ai)
+        self.browser = getattr(router, "browser", None)
 
     def handle(self, text):
+        try:
+            return self._handle(text)
+        except BrowserError as exc:
+            return f"Browser: {exc}"
+
+    def _handle(self, text):
         request = text.strip()
         if not request:
             return "Please type or say what you need."
+
+        browser_request = parse_browser_request(request) if self.browser else None
+        if browser_request:
+            return self._execute(*browser_request, request)
 
         # Common writing requests use the complete instruction to generate the
         # document, rather than treating the topic as the document itself.
@@ -57,8 +71,11 @@ class DesktopAgent:
             'Tools: open (named app or website), open_file (exact filename or full path), '
             'search_web (search query), search_youtube (search query), '
             'create_pdf (document topic), write_notepad (the writing request, including its topic). '
+            'browser_search (search query on the current browser site), browser_tab (tab number), '
+            'browser_result (search result number), browser_control (one of scroll_up, scroll_down, top, bottom, back, forward, refresh, new_tab, tabs, close_tab, play, pause). '
+            'For follow-up searches use browser_search unless a different site is explicitly requested. '
             'For a request to write or compose text, use write_notepad. Use up to 3 calls in requested order. '
-            'Copy each argument exactly from the user request; do not invent or translate it. '
+            'Copy text arguments from the user request; browser_control uses the enum, and tab/result numbers use digits. '
             'For ordinary questions or requests for instructions return {"type":"chat"}. '
             'For missing details or unsupported actions return '
             '{"type":"clarify","message":"short question or explanation"}. '
@@ -67,14 +84,13 @@ class DesktopAgent:
             '{"type":"tools","calls":[{"tool":"open","argument":"youtube"}]}; '
             '"make a pdf about climate change" -> '
             '{"type":"tools","calls":[{"tool":"create_pdf","argument":"climate change"}]}; '
-            '"notepad mein moon par essay likho" -> '
-            '{"type":"tools","calls":[{"tool":"write_notepad","argument":"moon par essay likho"}]}; '
+            '"write an essay about moons" -> '
+            '{"type":"tools","calls":[{"tool":"write_notepad","argument":"write an essay about moons"}]}; '
             '"how do I open youtube?" -> {"type":"chat"}. '
             'User request: ' + json.dumps(request, ensure_ascii=False)
         )
         response = self.ai.ask(prompt)
-        if response.startswith(("Friday is unavailable:", "Friday API key was rejected.",
-                                "Friday returned", "Set FRIDAY_API_KEY")):
+        if is_ai_error(response):
             return response
         plan = self._parse_plan(response)
         if not plan:
@@ -97,9 +113,24 @@ class DesktopAgent:
             if not isinstance(call, dict):
                 return "I couldn't create a valid action plan. Please rephrase your request."
             tool, argument = call.get("tool"), call.get("argument")
-            if (not isinstance(tool, str) or tool not in {"open", "open_file", "search_web", "search_youtube", "create_pdf", "write_notepad"}
+            allowed_tools = {"open", "open_file", "search_web", "search_youtube", "create_pdf", "write_notepad",
+                             "browser_search", "browser_control", "browser_tab", "browser_result"}
+            if (not isinstance(tool, str) or tool not in allowed_tools
                     or not isinstance(argument, str) or not argument.strip()
-                    or len(argument) > 300 or argument.strip().casefold() not in request.casefold()):
+                    or len(argument) > 300):
+                return "I couldn't verify the requested action or its details. Please be more specific."
+            argument = argument.strip()
+            if tool == "browser_control":
+                grounded = control_is_grounded(argument, request)
+            elif tool in {"browser_tab", "browser_result"}:
+                number = re.fullmatch(r"[1-9][0-9]?", argument)
+                ordinal = {"1": "first", "2": "second", "3": "third"}.get(argument)
+                noun = "tab" if tool == "browser_tab" else "result"
+                grounded = bool(number and re.search(rf"\b{noun}\b", request, re.I) and (re.search(rf"\b{argument}\b", request)
+                                             or (ordinal and re.search(rf"\b{ordinal}\b", request, re.I))))
+            else:
+                grounded = argument.casefold() in request.casefold()
+            if not grounded:
                 return "I couldn't verify the requested action or its details. Please be more specific."
             if tool == "create_pdf" and not re.search(r"\bpdf\b", request, re.I):
                 return "Please confirm that you want me to create a PDF and provide its topic."
@@ -139,6 +170,19 @@ class DesktopAgent:
             return None
 
     def _execute(self, tool, argument, request):
+        if tool.startswith("browser_"):
+            if not self.browser:
+                return "Browser controls are not connected. Restart the desktop app."
+            if tool == "browser_search":
+                return self.browser.search(argument)
+            if tool == "browser_control":
+                return self.browser.control(argument)
+            if tool == "browser_tab":
+                return self.browser.switch_tab(int(argument))
+            if tool == "browser_result":
+                return self.browser.open_result(int(argument))
+            if tool == "browser_play_result":
+                return self.browser.play_result(int(argument))
         if tool == "open":
             return self.router.handle("open " + argument, allow_planning=False)
         if tool == "open_file":

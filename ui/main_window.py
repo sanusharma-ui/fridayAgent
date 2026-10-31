@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 import config
 from services.commands import CommandRouter
 from services.agent import DesktopAgent
+from services.browser import BrowserController
 from services.friday_service import FridayService
 from services.speech_recognition import listen_command
 from services.tts_service import speak
@@ -49,7 +50,9 @@ class AssistantWindow(QMainWindow):
 
         # Core Services
         self.ai = FridayService()
-        self.router = CommandRouter(self.ai)
+        self.browser = BrowserController(config.BROWSER_CHANNEL)
+        self.browser_shutdown_started = False
+        self.router = CommandRouter(self.ai, browser=self.browser)
         self.agent = DesktopAgent(self.ai, self.router)
         self.weather = WeatherService(config.OPENWEATHER_API_KEY)
 
@@ -276,6 +279,21 @@ class AssistantWindow(QMainWindow):
             btn.setObjectName("actionBtn")
             btn.clicked.connect(lambda _, value=cmd: self.run_command(value, command_mode=True))
             side_layout.addWidget(btn)
+
+        browser_title = QLabel("Chrome controls")
+        browser_title.setObjectName("sidebarSectionTitle")
+        side_layout.addWidget(browser_title)
+        browser_grid = QGridLayout()
+        browser_grid.setSpacing(5)
+        for index, (label, command) in enumerate((
+                ("Back", "go back"), ("Forward", "go forward"),
+                ("Scroll up", "scroll up"), ("Scroll down", "scroll down"),
+                ("New tab", "new tab"), ("Show tabs", "show tabs"))):
+            button = QPushButton(label)
+            button.setObjectName("actionBtn")
+            button.clicked.connect(lambda _, value=command: self.run_command(value))
+            browser_grid.addWidget(button, index // 2, index % 2)
+        side_layout.addLayout(browser_grid)
 
         side_layout.addSpacing(6)
 
@@ -514,7 +532,7 @@ class AssistantWindow(QMainWindow):
                 self.telegram_status.setText("Telegram: disconnecting — reconnect to apply settings")
             # Reload services with new keys / urls
             self.ai = FridayService()
-            self.router = CommandRouter(self.ai)
+            self.router = CommandRouter(self.ai, browser=self.browser)
             self.agent = DesktopAgent(self.ai, self.router)
             self.weather = WeatherService(config.OPENWEATHER_API_KEY)
             self.w_city_label.setText(f"📍 {config.DEFAULT_CITY}")
@@ -734,6 +752,13 @@ class AssistantWindow(QMainWindow):
         if self.jobs or self.telegram_worker:
             self.closing = True
             self.status.setText("Finishing current task before closing...")
+            event.ignore()
+            return
+        if not self.browser_shutdown_started:
+            self.browser_shutdown_started = True
+            self.closing = True
+            self.status.setText("Closing the controlled browser session...")
+            self._job(self.browser.close, lambda _: None)
             event.ignore()
             return
         super().closeEvent(event)

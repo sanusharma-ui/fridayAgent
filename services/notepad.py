@@ -6,6 +6,8 @@ import re
 import subprocess
 from uuid import uuid4
 
+from services.friday_service import is_ai_error
+
 
 class NotepadWriter:
     def __init__(self, ai, directory=None, launch=None):
@@ -26,8 +28,7 @@ class NotepadWriter:
                 "or the user's request repeated.\n\nRequest: " + request
             )
             content = self.ai.ask(prompt)
-            if content.startswith(("Friday is unavailable:", "Friday API key was rejected.",
-                                   "Friday returned", "Set FRIDAY_API_KEY")):
+            if is_ai_error(content):
                 return content
             if not content.strip() or content.strip().casefold() == request.strip().casefold():
                 return "Friday did not generate the requested document. Please try again."
