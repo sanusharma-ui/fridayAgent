@@ -94,8 +94,13 @@ class ChromeSession:
                     return style.visibility !== 'hidden' && style.display !== 'none'
                         && rect.width > 0 && rect.height > 0;
                 };
+                const labelText = element => {
+                    const id = element.id;
+                    const label = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+                    return (label && label.innerText) || (element.closest('label') && element.closest('label').innerText) || '';
+                };
                 const text = element => (element.innerText || element.value || ''
-                    || element.getAttribute('aria-label') || element.title || '')
+                    || element.getAttribute('aria-label') || element.title || labelText(element))
                     .replace(/\\s+/g, ' ').trim().slice(0, 120);
                 const selector = 'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="menuitem"]';
                 const elements = Array.from(document.querySelectorAll(selector))
@@ -114,6 +119,10 @@ class ChromeSession:
                             role: element.getAttribute('role') || '',
                             type: element.getAttribute('type') || '',
                             name: element.getAttribute('name') || '',
+                            id: element.id || '',
+                            aria: element.getAttribute('aria-label') || '',
+                            label: labelText(element),
+                            disabled: Boolean(element.disabled || element.getAttribute('aria-disabled') === 'true'),
                             text: text(element),
                             href: element.href || '',
                             placeholder: element.getAttribute('placeholder') || ''
@@ -135,6 +144,14 @@ class ChromeSession:
                 details.append(f"type={element['type']}")
             if element["name"]:
                 details.append(f"name={element['name']!r}")
+            if element["id"]:
+                details.append(f"id={element['id']!r}")
+            if element["aria"]:
+                details.append(f"aria={element['aria']!r}")
+            if element["label"] and element["label"] != element["text"]:
+                details.append(f"label={element['label']!r}")
+            if element["disabled"]:
+                details.append("disabled")
             if element["text"]:
                 details.append(f"text={element['text']!r}")
             if element["placeholder"]:
@@ -143,6 +160,50 @@ class ChromeSession:
                 details.append(f"href={element['href'][:300]!r}")
             lines.append(f"[{element['ref']}] " + ", ".join(details))
         return "\n".join(lines)[:3000]
+
+    def click_matching(self, target):
+        """Click a uniquely matching visible control using its accessible name."""
+        page = self._active_page()
+        try:
+            match = page.evaluate("""target => {
+                const normalize = value => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                const wanted = normalize(target);
+                const selector = 'a,button,[role="button"],[role="link"],[role="tab"],[role="menuitem"]';
+                const visible = element => {
+                    const style = window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none'
+                        && rect.width > 0 && rect.height > 0
+                        && !element.disabled && element.getAttribute('aria-disabled') !== 'true';
+                };
+                const name = element => normalize(
+                    element.innerText || element.getAttribute('aria-label')
+                    || element.title || element.value
+                );
+                const candidates = Array.from(document.querySelectorAll(selector))
+                    .filter(visible)
+                    .map((element, index) => ({element, index, name: name(element)}))
+                    .filter(item => item.name === wanted || item.name.includes(wanted));
+                if (candidates.length !== 1) {
+                    return {count: candidates.length, names: candidates.slice(0, 5).map(item => item.name)};
+                }
+                const item = candidates[0];
+                item.element.setAttribute('data-neo-ref', `direct-${item.index}`);
+                return {count: 1, ref: `direct-${item.index}`, name: item.name};
+            }""", target)
+            if match["count"] == 0:
+                raise BrowserError(f"I could not find a visible button or link named '{target}'.")
+            if match["count"] > 1:
+                names = ", ".join(repr(name) for name in match["names"] if name)
+                raise BrowserError(f"More than one visible control matches '{target}': {names}. Please be more specific.")
+            locator = page.locator(f'[data-neo-ref="{match["ref"]}"]')
+            locator.click()
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except BrowserError:
+            raise
+        except Exception:
+            raise BrowserError("The matching page control could not be clicked. Ask me to inspect the current page again.") from None
+        return f"Clicked '{match['name']}'."
 
     def fill_element(self, reference, value):
         """Fill one current-page text field identified by a fresh context ref."""
@@ -323,6 +384,8 @@ class ChromeSession:
                 return self.page_context()
             if operation == "click_element":
                 return self.click_element(argument)
+            if operation == "click_matching":
+                return self.click_matching(argument)
             if operation == "fill_element":
                 reference, value = argument.split("\x00", 1)
                 return self.fill_element(reference, value)
@@ -408,6 +471,9 @@ class BrowserController:
 
     def click_element(self, reference):
         return self._call("click_element", reference)
+
+    def click_matching(self, target):
+        return self._call("click_matching", target)
 
     def fill_element(self, reference, value):
         return self._call("fill_element", f"{reference}\x00{value}")

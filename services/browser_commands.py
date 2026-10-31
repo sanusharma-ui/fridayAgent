@@ -24,6 +24,23 @@ def parse_fill_request(request):
     return None
 
 
+def parse_click_target(request):
+    text = request.strip().rstrip(".!?")
+    match = re.fullmatch(
+        r"(?:please\s+|can you\s+|could you\s+)?click\s+(?:on\s+)?(?:the\s+)?(.+)",
+        text,
+        re.I,
+    )
+    if not match:
+        return None
+    target = match.group(1).strip()
+    if re.search(r"\b(?:button|link|control|tab|named|marked)\b", target, re.I):
+        return None
+    if re.fullmatch(r"(?:\d+|the\s+\d+(?:st|nd|rd|th)?)", target, re.I):
+        return None
+    return target
+
+
 CONTROL_PHRASES = {
     "scroll up": "scroll_up", "scroll down": "scroll_down",
     "page up": "scroll_up", "page down": "scroll_down",

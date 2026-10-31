@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from services.agent import DesktopAgent
 from services.browser import BrowserController, BrowserError, ChromeSession, site_for_url
-from services.browser_commands import parse_browser_request, parse_fill_request
+from services.browser_commands import parse_browser_request, parse_click_target, parse_fill_request
 from services.commands import CommandRouter
 from services.friday_service import FridayService
 
@@ -77,9 +77,7 @@ class BrowserTests(unittest.TestCase):
 
     def test_ai_receives_fresh_page_context_for_element_click(self):
         browser = MagicMock()
-        browser.page_context.return_value = (
-            "TITLE: Example\n[e1] button, text='Continue'\n"
-        )
+        browser.page_context.return_value = "TITLE: Example\n[e1] button, text='Continue'\n"
         browser.click_element.return_value = "Clicked."
         ai = MagicMock()
         ai.ask.return_value = json.dumps({
@@ -87,11 +85,36 @@ class BrowserTests(unittest.TestCase):
             "calls": [{"tool": "browser_click", "argument": "e1"}],
         })
         agent = DesktopAgent(ai, CommandRouter(ai, browser=browser))
-        result = agent.handle("click the Continue button")
+        result = agent.handle("click the element marked Continue")
         self.assertEqual(result, "Clicked.")
         browser.page_context.assert_called_once()
         browser.click_element.assert_called_once_with("e1")
         self.assertIn("CURRENT PAGE CONTEXT", ai.ask.call_args.args[0])
+
+    def test_clear_click_target_uses_unique_accessible_control_without_ai(self):
+        browser = MagicMock()
+        browser.click_matching.return_value = "Clicked 'Continue'."
+        ai = MagicMock()
+        agent = DesktopAgent(ai, CommandRouter(ai, browser=browser))
+        self.assertEqual(agent.handle("click Continue"), "Clicked 'Continue'.")
+        browser.click_matching.assert_called_once_with("Continue")
+        ai.ask.assert_not_called()
+
+    def test_browser_click_matching_rejects_ambiguous_controls(self):
+        session = self.session()
+        session.page.evaluate.return_value = {
+            "count": 2,
+            "names": ["Sign in", "Sign in"],
+        }
+        with self.assertRaisesRegex(BrowserError, "More than one"):
+            session.click_matching("Sign in")
+        session.page.locator.assert_not_called()
+
+    def test_direct_click_target_parser_ignores_numbered_result_commands(self):
+        self.assertEqual(parse_click_target("click Continue"), "Continue")
+        self.assertIsNone(parse_click_target("click the Continue button"))
+        self.assertEqual(parse_click_target("please click on Sign in"), "Sign in")
+        self.assertIsNone(parse_click_target("click 2"))
 
     def test_form_value_is_redacted_from_ai_and_filled_locally(self):
         browser = MagicMock()

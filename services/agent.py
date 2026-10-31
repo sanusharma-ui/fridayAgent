@@ -8,7 +8,7 @@ import json
 import re
 from services.notepad import NotepadWriter
 from services.browser import BrowserError
-from services.browser_commands import parse_browser_request, parse_fill_request, control_is_grounded
+from services.browser_commands import parse_browser_request, parse_fill_request, parse_click_target, control_is_grounded
 from services.friday_service import is_ai_error
 
 
@@ -37,6 +37,9 @@ class DesktopAgent:
             return self._execute(*browser_request, request)
 
         fill_request = parse_fill_request(request) if self.browser else None
+        click_target = parse_click_target(request) if self.browser else None
+        if click_target:
+            return self.browser.click_matching(click_target)
 
         # Common writing requests use the complete instruction to generate the
         # document, rather than treating the topic as the document itself.
