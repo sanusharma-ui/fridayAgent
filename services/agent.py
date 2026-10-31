@@ -110,6 +110,11 @@ class DesktopAgent:
             value, target = fill_request
             ai_request = f"Fill the field matching {target!r} with the user-provided value [VALUE REDACTED LOCALLY]."
         prompt = prompt.replace(json.dumps(request, ensure_ascii=False), json.dumps(ai_request, ensure_ascii=False))
+        # Leave room for FridayService's language prefix and this context label.
+        # The backend limit applies to the complete serialized prompt, not just
+        # the user's short command.
+        context_budget = max(0, 3300 - len(prompt))
+        page_context = page_context[:context_budget]
         prompt += "\n\nCURRENT PAGE CONTEXT (fresh for this request; never use an old context):\n" + page_context
         response = self.ai.ask(prompt)
         if is_ai_error(response):

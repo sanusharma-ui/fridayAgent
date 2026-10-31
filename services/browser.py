@@ -96,7 +96,7 @@ class ChromeSession:
                 };
                 const text = element => (element.innerText || element.value || ''
                     || element.getAttribute('aria-label') || element.title || '')
-                    .replace(/\\s+/g, ' ').trim().slice(0, 240);
+                    .replace(/\\s+/g, ' ').trim().slice(0, 120);
                 const selector = 'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="menuitem"]';
                 const elements = Array.from(document.querySelectorAll(selector))
                     .filter(visible).slice(0, 200);
@@ -104,7 +104,7 @@ class ChromeSession:
                     title: document.title.slice(0, 200),
                     url: location.href,
                     body: (document.body ? document.body.innerText : '')
-                        .replace(/\\s+/g, ' ').trim().slice(0, 4000),
+                        .replace(/\\s+/g, ' ').trim().slice(0, 700),
                     elements: elements.map((element, index) => {
                         const ref = `e${index + 1}`;
                         element.setAttribute('data-neo-ref', ref);
@@ -142,7 +142,7 @@ class ChromeSession:
             if element["href"]:
                 details.append(f"href={element['href'][:300]!r}")
             lines.append(f"[{element['ref']}] " + ", ".join(details))
-        return "\n".join(lines)[:16000]
+        return "\n".join(lines)[:3000]
 
     def fill_element(self, reference, value):
         """Fill one current-page text field identified by a fresh context ref."""

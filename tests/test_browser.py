@@ -145,6 +145,17 @@ class BrowserTests(unittest.TestCase):
         self.assertIn("couldn't verify", result)
         browser.click_element.assert_not_called()
 
+    def test_current_page_context_is_bounded_and_request_stays_under_friday_limit(self):
+        browser = MagicMock()
+        browser.page_context.return_value = "CURRENT PAGE CONTEXT\n" + ("[e1] button, text='Continue'\n" * 500)
+        ai = MagicMock()
+        ai.ask.return_value = '{"type":"chat"}'
+        agent = DesktopAgent(ai, CommandRouter(ai, browser=browser))
+        agent.handle("what is on this page?")
+        prefix = "Use English for replies and explanations. Preserve requested JSON formats and literal text.\n"
+        planner_prompt = ai.ask.call_args_list[0].args[0]
+        self.assertLessEqual(len(planner_prompt) + len(prefix), 3500)
+
     def test_actual_url_determines_search_site(self):
         session = self.session("https://www.bing.com/search?q=test")
         session.search("new query")
