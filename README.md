@@ -26,3 +26,16 @@ You can also open installed Windows apps by their Start menu name, or say `open 
 Say `write an essay about moons` or `write a short poem about rain in Notepad`: Friday generates the requested content, saves a new UTF-8 text file in `Documents/NEO Notes`, and opens it in a new Notepad document. It does not type into or change an already-open document. For literal text, say `write exactly Hello from NEO`; the words following `exactly` are saved as given. Generated content requires the Friday backend and should be reviewed.
 
 For weather, set `OPENWEATHER_API_KEY` in the environment. The key formerly present in source should be rotated before reuse.
+
+## Pro UI & Keyboard Shortcuts
+
+- `Return` / `Ctrl+Return`: Send typed command
+- `Ctrl+Space` or `F2`: Push-to-talk voice input (6s offline recording)
+- `Ctrl+N`: New chat session (resets stream & reveals starter prompt cards)
+- `Ctrl+L`: Instantly focus command input
+- `Ctrl+Shift+C`: Copy latest AI response to clipboard
+- `Ctrl+M`: Toggle spoken voice replies (TTS)
+- `F5`: Refresh weather forecast
+- `Ctrl+,`: Open Settings & Diagnostics dialog (test Friday endpoint, update API keys, configure default city)
+- `Esc`: Clear input line or reset view
+
