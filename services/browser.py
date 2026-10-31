@@ -112,6 +112,8 @@ class ChromeSession:
                             ref,
                             tag: element.tagName.toLowerCase(),
                             role: element.getAttribute('role') || '',
+                            type: element.getAttribute('type') || '',
+                            name: element.getAttribute('name') || '',
                             text: text(element),
                             href: element.href || '',
                             placeholder: element.getAttribute('placeholder') || ''
@@ -129,6 +131,10 @@ class ChromeSession:
             details = [element["tag"]]
             if element["role"]:
                 details.append(f"role={element['role']}")
+            if element["type"]:
+                details.append(f"type={element['type']}")
+            if element["name"]:
+                details.append(f"name={element['name']!r}")
             if element["text"]:
                 details.append(f"text={element['text']!r}")
             if element["placeholder"]:
@@ -137,6 +143,28 @@ class ChromeSession:
                 details.append(f"href={element['href'][:300]!r}")
             lines.append(f"[{element['ref']}] " + ", ".join(details))
         return "\n".join(lines)[:16000]
+
+    def fill_element(self, reference, value):
+        """Fill one current-page text field identified by a fresh context ref."""
+        if not re.fullmatch(r"e[1-9][0-9]{0,2}", str(reference)):
+            raise BrowserError("That page element reference is invalid.")
+        page = self._active_page()
+        locator = page.locator(f'[data-neo-ref="{reference}"]')
+        try:
+            if locator.count() != 1 or not locator.is_visible():
+                raise BrowserError("That form field is no longer available. Ask me to inspect the page again.")
+            tag = locator.evaluate("element => element.tagName.toLowerCase()")
+            input_type = locator.get_attribute("type") or "text"
+            if tag not in {"input", "textarea"} or input_type.lower() in {
+                "password", "hidden", "file", "checkbox", "radio", "submit", "button"
+            }:
+                raise BrowserError("Only visible ordinary text fields can be filled automatically.")
+            locator.fill(value)
+        except BrowserError:
+            raise
+        except Exception:
+            raise BrowserError("That form field could not be filled. Ask me to inspect the current page again.") from None
+        return f"Filled page field {reference}."
 
     def click_element(self, reference):
         """Click one element from a freshly generated page-context reference."""
@@ -295,6 +323,9 @@ class ChromeSession:
                 return self.page_context()
             if operation == "click_element":
                 return self.click_element(argument)
+            if operation == "fill_element":
+                reference, value = argument.split("\x00", 1)
+                return self.fill_element(reference, value)
             raise BrowserError("Unsupported browser operation.")
         except BrowserError:
             raise
@@ -377,6 +408,9 @@ class BrowserController:
 
     def click_element(self, reference):
         return self._call("click_element", reference)
+
+    def fill_element(self, reference, value):
+        return self._call("fill_element", f"{reference}\x00{value}")
 
     def close(self):
         with self._lock:

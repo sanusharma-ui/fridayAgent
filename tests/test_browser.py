@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from services.agent import DesktopAgent
 from services.browser import BrowserController, BrowserError, ChromeSession, site_for_url
-from services.browser_commands import parse_browser_request
+from services.browser_commands import parse_browser_request, parse_fill_request
 from services.commands import CommandRouter
 from services.friday_service import FridayService
 
@@ -92,6 +92,45 @@ class BrowserTests(unittest.TestCase):
         browser.page_context.assert_called_once()
         browser.click_element.assert_called_once_with("e1")
         self.assertIn("CURRENT PAGE CONTEXT", ai.ask.call_args.args[0])
+
+    def test_form_value_is_redacted_from_ai_and_filled_locally(self):
+        browser = MagicMock()
+        browser.page_context.return_value = "TITLE: Login\n[e1] input, type=text, name='email'\n"
+        browser.fill_element.return_value = "Filled page field e1."
+        ai = MagicMock()
+        ai.ask.return_value = json.dumps({
+            "type": "tools",
+            "calls": [{"tool": "browser_fill", "argument": "e1"}],
+        })
+        agent = DesktopAgent(ai, CommandRouter(ai, browser=browser))
+        result = agent.handle("enter user@example.com in the email field")
+        self.assertEqual(result, "Filled page field e1.")
+        self.assertEqual(browser.fill_element.call_args.args, ("e1", "user@example.com"))
+        self.assertNotIn("user@example.com", ai.ask.call_args.args[0])
+        self.assertIn("VALUE REDACTED LOCALLY", ai.ask.call_args.args[0])
+
+    def test_sensitive_form_fields_are_not_filled(self):
+        browser = MagicMock()
+        browser.page_context.return_value = "TITLE: Login\n[e1] input, type=password, name='password'\n"
+        ai = MagicMock()
+        ai.ask.return_value = json.dumps({
+            "type": "tools",
+            "calls": [{"tool": "browser_fill", "argument": "e1"}],
+        })
+        agent = DesktopAgent(ai, CommandRouter(ai, browser=browser))
+        result = agent.handle("enter secret123 in the password field")
+        self.assertIn("won't automatically fill password", result)
+        browser.fill_element.assert_not_called()
+
+    def test_fill_request_parser_supports_english_and_hinglish(self):
+        self.assertEqual(
+            parse_fill_request("type user@example.com into the email field"),
+            ("user@example.com", "email field"),
+        )
+        self.assertEqual(
+            parse_fill_request("password field me secret daalo"),
+            ("secret", "password"),
+        )
 
     def test_element_click_requires_current_context_reference(self):
         browser = MagicMock()

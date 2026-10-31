@@ -3,6 +3,27 @@
 import re
 
 
+def parse_fill_request(request):
+    """Extract a user-provided value locally, without sending it to the AI."""
+    text = request.strip().rstrip(".!?")
+    patterns = (
+        r"(?:type|enter|fill|put|write)\s+(.+?)\s+(?:in|into|on)\s+(?:the\s+)?(.+)",
+        r"(?:the\s+)?(.+?)\s+field\s+(?:me|mein|par)\s+(.+?)\s+(?:daalo|dalo|bhar do|bharna)",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, text, re.I)
+        if match:
+            if "field" in pattern:
+                target, value = match.group(1), match.group(2)
+            else:
+                value, target = match.group(1), match.group(2)
+            value = value.strip().strip("\"'")
+            target = target.strip()
+            if value and target:
+                return value, target
+    return None
+
+
 CONTROL_PHRASES = {
     "scroll up": "scroll_up", "scroll down": "scroll_down",
     "page up": "scroll_up", "page down": "scroll_down",

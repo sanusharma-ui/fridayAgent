@@ -8,7 +8,7 @@ import json
 import re
 from services.notepad import NotepadWriter
 from services.browser import BrowserError
-from services.browser_commands import parse_browser_request, control_is_grounded
+from services.browser_commands import parse_browser_request, parse_fill_request, control_is_grounded
 from services.friday_service import is_ai_error
 
 
@@ -35,6 +35,8 @@ class DesktopAgent:
         browser_request = parse_browser_request(request) if self.browser else None
         if browser_request:
             return self._execute(*browser_request, request)
+
+        fill_request = parse_fill_request(request) if self.browser else None
 
         # Common writing requests use the complete instruction to generate the
         # document, rather than treating the topic as the document itself.
@@ -73,11 +75,13 @@ class DesktopAgent:
             'create_pdf (document topic), write_notepad (the writing request, including its topic). '
             'browser_search (search query on the current browser site), browser_tab (tab number), '
             'browser_result (search result number), browser_click (element ref from CURRENT PAGE CONTEXT), '
+            'browser_fill (ordinary visible text-field ref; the value is supplied locally and never included in the AI response), '
             'browser_control (one of scroll_up, scroll_down, top, bottom, back, forward, refresh, new_tab, tabs, close_tab, play, pause). '
             'For follow-up searches use browser_search unless a different site is explicitly requested. '
             'For a request to write or compose text, use write_notepad. Use up to 3 calls in requested order. '
             'Copy text arguments from the user request; browser_control uses the enum, and tab/result numbers use digits. '
             'For a request to click a named button, link, or control, use browser_click with the matching element ref from CURRENT PAGE CONTEXT. '
+            'For a request to fill a form field, use browser_fill with the matching input ref. Never invent refs. '
             'For ordinary questions or requests for instructions return {"type":"chat"}. '
             'For missing details or unsupported actions return '
             '{"type":"clarify","message":"short question or explanation"}. '
@@ -101,6 +105,11 @@ class DesktopAgent:
                     page_context = "(CURRENT PAGE CONTEXT unavailable; do not select browser_click.)"
             except BrowserError:
                 page_context = "(CURRENT PAGE CONTEXT unavailable; do not select browser_click.)"
+        ai_request = request
+        if fill_request:
+            value, target = fill_request
+            ai_request = f"Fill the field matching {target!r} with the user-provided value [VALUE REDACTED LOCALLY]."
+        prompt = prompt.replace(json.dumps(request, ensure_ascii=False), json.dumps(ai_request, ensure_ascii=False))
         prompt += "\n\nCURRENT PAGE CONTEXT (fresh for this request; never use an old context):\n" + page_context
         response = self.ai.ask(prompt)
         if is_ai_error(response):
@@ -110,6 +119,8 @@ class DesktopAgent:
             return "I couldn't understand the action reliably. Please try again or describe it more specifically."
         kind = plan.get("type")
         if kind == "chat":
+            if fill_request:
+                return "I couldn't identify a safe form field for that value. Please specify the field more clearly."
             return self.ai.ask(request)
         if kind == "clarify":
             message = plan.get("message")
@@ -127,7 +138,8 @@ class DesktopAgent:
                 return "I couldn't create a valid action plan. Please rephrase your request."
             tool, argument = call.get("tool"), call.get("argument")
             allowed_tools = {"open", "open_file", "search_web", "search_youtube", "create_pdf", "write_notepad",
-                             "browser_search", "browser_control", "browser_tab", "browser_result", "browser_click"}
+                             "browser_search", "browser_control", "browser_tab", "browser_result", "browser_click",
+                             "browser_fill"}
             if (not isinstance(tool, str) or tool not in allowed_tools
                     or not isinstance(argument, str) or not argument.strip()
                     or len(argument) > 300):
@@ -136,6 +148,11 @@ class DesktopAgent:
             if tool == "browser_click":
                 grounded = (
                     bool(re.search(r"\bclick\b", request, re.I))
+                    and bool(re.search(rf"\[{re.escape(argument)}\]", page_context))
+                )
+            elif tool == "browser_fill":
+                grounded = (
+                    bool(fill_request)
                     and bool(re.search(rf"\[{re.escape(argument)}\]", page_context))
                 )
             elif tool == "browser_control":
@@ -167,7 +184,24 @@ class DesktopAgent:
         results = []
         for tool, argument in validated:
             try:
-                result = self._execute(tool, argument, request)
+                if tool == "browser_fill":
+                    if not fill_request:
+                        return "Tell me what value to enter and which field to use."
+                    value, _ = fill_request
+                    field_line = re.search(
+                        rf"^\[{re.escape(argument)}\][^\n]*$",
+                        page_context,
+                        re.I | re.M,
+                    )
+                    if field_line and re.search(
+                        r"\b(?:type=(?:password|hidden)|password|passcode|otp|one[- ]time|cvv|card|credit|debit)\b",
+                        field_line.group(0),
+                        re.I,
+                    ):
+                        return "For safety, I won't automatically fill password, OTP, or card fields."
+                    result = self.browser.fill_element(argument, value)
+                else:
+                    result = self._execute(tool, argument, request)
             except Exception as exc:
                 results.append(f"Action failed: {exc}")
                 break
