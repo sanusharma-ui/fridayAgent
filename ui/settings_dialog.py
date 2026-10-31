@@ -1,20 +1,25 @@
 """Preferences and Diagnostics modal dialog for NEO AI Assistant."""
 
 from pathlib import Path
+import os
+import re
+import tempfile
+from dotenv import set_key
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QTabWidget, QWidget, QFrame, QMessageBox
+    QPushButton, QTabWidget, QWidget, QFrame, QMessageBox, QCheckBox
 )
 
 import config
+from services.telegram_access import parse_allowed_ids
 
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Preferences & System Settings")
-        self.resize(540, 480)
+        self.resize(620, 560)
         self.setModal(True)
         self._init_ui()
         self._apply_dialog_styles()
@@ -94,6 +99,40 @@ class SettingsDialog(QDialog):
 
         tools_layout.addStretch()
         self.tabs.addTab(tools_tab, "Weather & Environment")
+
+        telegram_tab = QWidget()
+        telegram_layout = QVBoxLayout(telegram_tab)
+        telegram_layout.setContentsMargins(14, 16, 14, 16)
+        telegram_layout.setSpacing(8)
+        help_text = QLabel("Create a bot with @BotFather. Save its token here, connect Telegram, then send /id to your bot. Add your numeric ID below and reconnect to allow tasks. Keep the laptop app running.")
+        help_text.setWordWrap(True)
+        telegram_layout.addWidget(help_text)
+        telegram_layout.addWidget(QLabel("Bot token (kept in local .env)"))
+        self.telegram_token_input = QLineEdit(config.TELEGRAM_BOT_TOKEN)
+        self.telegram_token_input.setEchoMode(QLineEdit.Password)
+        self.telegram_token_input.setPlaceholderText("123456789:token-from-BotFather")
+        telegram_layout.addWidget(self.telegram_token_input)
+        telegram_layout.addWidget(QLabel("Allowed user IDs (comma separated; empty = setup only)"))
+        self.telegram_ids_input = QLineEdit(config.TELEGRAM_ALLOWED_USER_IDS)
+        self.telegram_ids_input.setPlaceholderText("Your numeric Telegram user ID")
+        telegram_layout.addWidget(self.telegram_ids_input)
+        telegram_layout.addWidget(QLabel("Voice model / language (empty language = auto-detect)"))
+        voice_row = QHBoxLayout()
+        self.telegram_model_input = QLineEdit(config.TELEGRAM_WHISPER_MODEL)
+        self.telegram_model_input.setPlaceholderText("base")
+        self.telegram_language_input = QLineEdit(config.TELEGRAM_VOICE_LANGUAGE)
+        self.telegram_language_input.setPlaceholderText("auto / en / hi")
+        voice_row.addWidget(self.telegram_model_input)
+        voice_row.addWidget(self.telegram_language_input)
+        telegram_layout.addLayout(voice_row)
+        self.telegram_enabled = QCheckBox("Connect Telegram automatically when this app starts")
+        self.telegram_enabled.setChecked(config.TELEGRAM_ENABLED)
+        telegram_layout.addWidget(self.telegram_enabled)
+        voice_help = QLabel("Voice notes need requirements-telegram.txt. The first voice note downloads the multilingual model; text works without it. Replies are text. Changes require reconnecting Telegram.")
+        voice_help.setWordWrap(True)
+        telegram_layout.addWidget(voice_help)
+        telegram_layout.addStretch()
+        self.tabs.addTab(telegram_tab, "Telegram")
 
         # Tab 3: Shortcuts & Cheatsheet
         shortcuts_tab = QWidget()
@@ -192,44 +231,55 @@ class SettingsDialog(QDialog):
             self.test_ai_btn.setText("Ping Friday Server")
 
     def _save_settings(self):
-        config.AI_ENDPOINT_URL = self.endpoint_input.text().strip().rstrip("/")
-        config.FRIDAY_API_KEY = self.api_key_input.text().strip()
-        config.OPENWEATHER_API_KEY = self.weather_key_input.text().strip()
-        config.DEFAULT_CITY = self.city_input.text().strip() or "Nagpur"
-
-        # Update .env file safely if present
-        env_path = Path(__file__).resolve().parents[1] / ".env"
+        token = self.telegram_token_input.text().strip()
+        allowed_ids = self.telegram_ids_input.text().strip()
+        language = self.telegram_language_input.text().strip().lower()
+        if language == "auto":
+            language = ""
         try:
-            lines = []
-            if env_path.is_file():
-                lines = env_path.read_text(encoding="utf-8").splitlines()
+            parse_allowed_ids(allowed_ids)
+            if token and not re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]{20,}", token):
+                raise ValueError("Enter a valid bot token from BotFather.")
+            if self.telegram_enabled.isChecked() and not token:
+                raise ValueError("Enter a Telegram bot token before enabling automatic connection.")
+            if language and not re.fullmatch(r"[a-z]{2,3}", language):
+                raise ValueError("Use a language code such as en or hi, or leave it empty.")
+        except ValueError as exc:
+            QMessageBox.warning(self, "Telegram settings", str(exc))
+            return
+        settings_map = {
+            "AI_ENDPOINT_URL": self.endpoint_input.text().strip().rstrip("/"),
+            "FRIDAY_API_KEY": self.api_key_input.text().strip(),
+            "OPENWEATHER_API_KEY": self.weather_key_input.text().strip(),
+            "DEFAULT_CITY": self.city_input.text().strip() or "Nagpur",
+            "TELEGRAM_BOT_TOKEN": token,
+            "TELEGRAM_ALLOWED_USER_IDS": allowed_ids,
+            "TELEGRAM_WHISPER_MODEL": self.telegram_model_input.text().strip() or "base",
+            "TELEGRAM_VOICE_LANGUAGE": language,
+            "TELEGRAM_ENABLED": "true" if self.telegram_enabled.isChecked() else "false",
+        }
 
-            settings_map = {
-                "AI_ENDPOINT_URL": config.AI_ENDPOINT_URL,
-                "FRIDAY_API_KEY": config.FRIDAY_API_KEY,
-                "OPENWEATHER_API_KEY": config.OPENWEATHER_API_KEY,
-                "DEFAULT_CITY": config.DEFAULT_CITY,
-            }
-
-            new_lines = []
-            handled_keys = set()
-            for line in lines:
-                if "=" in line and not line.strip().startswith("#"):
-                    k = line.split("=", 1)[0].strip()
-                    if k in settings_map:
-                        new_lines.append(f"{k}={settings_map[k]}")
-                        handled_keys.add(k)
-                        continue
-                new_lines.append(line)
-
-            for k, v in settings_map.items():
-                if k not in handled_keys:
-                    new_lines.append(f"{k}={v}")
-
-            env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        # Quote values and replace atomically so tokens never become malformed
+        # environment entries, and failed writes don't silently appear successful.
+        env_path = Path(__file__).resolve().parents[1] / ".env"
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=".env.", suffix=".tmp",
+                                             dir=env_path.parent, delete=False) as handle:
+                temporary = Path(handle.name)
+                if env_path.is_file():
+                    handle.write(env_path.read_text(encoding="utf-8"))
+            for key, value in settings_map.items():
+                set_key(str(temporary), key, value, quote_mode="always")
+            os.replace(temporary, env_path)
         except Exception:
-            pass
-
+            QMessageBox.warning(self, "Save failed", "Could not save .env. Check folder permissions; settings have not been applied.")
+            return
+        finally:
+            if temporary and temporary.exists():
+                temporary.unlink()
+        for key, value in settings_map.items():
+            setattr(config, key, value == "true" if key == "TELEGRAM_ENABLED" else value)
         self.accept()
 
     def _apply_dialog_styles(self):

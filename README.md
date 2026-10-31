@@ -27,6 +27,31 @@ Say `write an essay about moons` or `write a short poem about rain in Notepad`: 
 
 For weather, set `OPENWEATHER_API_KEY` in the environment. The key formerly present in source should be rotated before reuse.
 
+## Control your laptop from Telegram
+
+Telegram text and voice notes use the same agent and supported tools as the desktop window. Tasks run on the laptop, and the bot sends a text result to your phone. This is voice-note input, not a live call; generated PDFs and Notepad files remain on the laptop.
+
+1. In Telegram, open the official [@BotFather](https://t.me/BotFather), use `/newbot`, and copy your new bot's token. Never send the token to other chats or commit it.
+2. For voice notes, install the optional speech dependencies on the laptop:
+
+   ```powershell
+   python -m pip install -r requirements-telegram.txt
+   python app.py
+   ```
+
+   Text requests work with the normal `requirements.txt` installation.
+3. In the laptop app, open **Settings > Telegram**, paste the bot token, and save. Leave **Allowed user IDs** empty for initial pairing. Click **Connect Telegram** in the sidebar.
+4. Open your own bot's private chat on your phone and send `/id` **after the laptop says connected/setup only**. Copy your numeric user ID into **Settings > Telegram > Allowed user IDs**, save, wait for disconnection, then click **Connect Telegram** again. An empty allowlist permits only `/id`; it never permits tasks. Add multiple trusted IDs separated by commas if needed.
+5. Send `/start`, then try `can you open YouTube for me`, or record a Telegram voice note saying `write an essay about moons`. You will see the recognized text, a thinking message, and the tool result. The desktop conversation also shows remote requests.
+
+Settings are stored in the local ignored `.env`; equivalent variables are listed in `.env.example`. You can optionally enable automatic Telegram connection on app startup. Changing Telegram settings requires disconnecting and reconnecting. A bot can only have one polling app/webhook active; use a dedicated bot for this laptop.
+
+Voice notes support multilingual transcription with [faster-whisper](https://github.com/SYSTRAN/faster-whisper); its PyAV dependency decodes Telegram audio without a separate FFmpeg executable. The default `base` model runs on CPU and downloads to the user model cache on first use. That first request can take longer; later transcription is local. Use `TELEGRAM_VOICE_LANGUAGE=en` or `hi` if automatic language detection is unreliable. Hindi/Hinglish recognition and action interpretation can still make mistakes. Audio downloads are temporary and deleted after transcription. Voice notes are limited to 60 seconds and 10 MB; text/transcripts are limited to 1500 characters. Transcript text is sent to the configured Friday backend when AI planning or generation is needed.
+
+Only allowed **numeric user IDs in private chats** can run tasks. Group, forwarded, edited and old messages are not executed. Pending messages from before connection are discarded to avoid replaying offline commands. `/pause` pauses new tasks, `/resume` enables them, `/status` checks the connection, and `/help` lists controls. These commands are processed after the current request finishes; they do not cancel an already-running action. Use **Disconnect Telegram** on the laptop to stop accepting remote work. In-progress desktop work is allowed to finish, and shutdown can wait for a running transcription/model download.
+
+Keep the laptop awake, signed into Windows, online, and the desktop app open. AI tasks also require the Friday Colab backend to be running. Local actions can still work without Colab. If the desktop assistant is busy or a settings dialog is open, a remote task is rejected with a retry message instead of running concurrently. Telegram uses outbound [Bot API long polling](https://core.telegram.org/bots/api#getupdates); you do not need to expose a laptop port or create another ngrok tunnel.
+
 ## Pro UI & Keyboard Shortcuts
 
 - `Return` / `Ctrl+Return`: Send typed command
@@ -38,4 +63,3 @@ For weather, set `OPENWEATHER_API_KEY` in the environment. The key formerly pres
 - `F5`: Refresh weather forecast
 - `Ctrl+,`: Open Settings & Diagnostics dialog (test Friday endpoint, update API keys, configure default city)
 - `Esc`: Clear input line or reset view
-

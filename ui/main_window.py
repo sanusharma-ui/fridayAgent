@@ -19,6 +19,7 @@ from services.friday_service import FridayService
 from services.speech_recognition import listen_command
 from services.tts_service import speak
 from services.weather import WeatherService
+from services.telegram_access import TelegramWorker
 from ui.settings_dialog import SettingsDialog
 from ui.styles import get_application_stylesheet, format_message_html
 
@@ -55,6 +56,7 @@ class AssistantWindow(QMainWindow):
         self.jobs = set()
         self.busy = False
         self.closing = False
+        self.telegram_worker = None
         self.thinking_step = 0
         self.message_count = 0
         self.last_ai_reply = ""
@@ -74,6 +76,8 @@ class AssistantWindow(QMainWindow):
 
         # Update initial backend indicators
         self._update_connection_indicators()
+        if config.TELEGRAM_ENABLED:
+            QTimer.singleShot(0, self.toggle_telegram)
 
     def _init_ui(self):
         root = QWidget()
@@ -327,6 +331,20 @@ class AssistantWindow(QMainWindow):
         voice_info.setStyleSheet("color: #64748b; font-size: 10px;")
         side_layout.addWidget(voice_info)
 
+        side_layout.addSpacing(6)
+        remote_title = QLabel("Phone access")
+        remote_title.setObjectName("sidebarSectionTitle")
+        side_layout.addWidget(remote_title)
+        self.telegram_status = QLabel("Telegram: off")
+        self.telegram_status.setWordWrap(True)
+        self.telegram_status.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        side_layout.addWidget(self.telegram_status)
+        self.telegram_button = QPushButton("Connect Telegram")
+        self.telegram_button.setObjectName("actionBtn")
+        self.telegram_button.setToolTip("Set your bot token and allowed user ID in Settings > Telegram first")
+        self.telegram_button.clicked.connect(self.toggle_telegram)
+        side_layout.addWidget(self.telegram_button)
+
         side_layout.addStretch()
 
         # Session Stats
@@ -484,8 +502,15 @@ class AssistantWindow(QMainWindow):
 
     def open_settings(self):
         """Open the Preferences & Diagnostics dialog."""
+        if self.busy or self.closing:
+            self.status.setText("Wait for the current task before changing settings.")
+            return
         dialog = SettingsDialog(self)
         if dialog.exec_():
+            if self.telegram_worker:
+                self.telegram_worker.stop()
+                self.telegram_button.setEnabled(False)
+                self.telegram_status.setText("Telegram: disconnecting — reconnect to apply settings")
             # Reload services with new keys / urls
             self.ai = FridayService()
             self.router = CommandRouter(self.ai)
@@ -495,6 +520,64 @@ class AssistantWindow(QMainWindow):
             self.w_city_input.setText(config.DEFAULT_CITY)
             self._update_connection_indicators()
             self.status.setText("✓ Settings saved and applied successfully.")
+
+    def toggle_telegram(self):
+        if self.closing:
+            return
+        if self.telegram_worker:
+            self.telegram_worker.stop()
+            self.telegram_button.setEnabled(False)
+            self.telegram_status.setText("Telegram: disconnecting...")
+            return
+        try:
+            worker = TelegramWorker(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_ALLOWED_USER_IDS,
+                                    config.TELEGRAM_WHISPER_MODEL, config.TELEGRAM_VOICE_LANGUAGE, self)
+        except ValueError as exc:
+            self.telegram_status.setText(str(exc))
+            return
+        self.telegram_worker = worker
+        worker.status.connect(self.telegram_status.setText)
+        worker.task.connect(self._telegram_request)
+        worker.finished.connect(self._telegram_finished)
+        self.telegram_button.setText("Disconnect Telegram")
+        worker.start()
+
+    def _telegram_finished(self):
+        worker = self.telegram_worker
+        self.telegram_worker = None
+        self.telegram_button.setText("Connect Telegram")
+        self.telegram_button.setEnabled(True)
+        if worker and worker.stopped.is_set():
+            self.telegram_status.setText("Telegram: off")
+        if worker:
+            worker.deleteLater()
+        if self.closing and not self.jobs:
+            self.close()
+
+    def _telegram_request(self, task):
+        # All remote actions enter through the GUI thread's existing busy gate.
+        # No background Telegram thread touches widgets or executes the agent.
+        if (self.closing or task.cancelled.is_set() or not self.telegram_worker
+                or self.telegram_worker.stopped.is_set()):
+            task.finish("Telegram access is disconnected.")
+            return
+        if self.busy or self.settings_btn.isDown() or QApplication.activeModalWidget():
+            task.finish("The laptop assistant is busy. Please send the request again when it is ready.")
+            return
+        self.hero_card.hide()
+        self._message("You (Telegram)", task.text)
+        self._start_thinking("Thinking about your Telegram request...")
+
+        def done(reply):
+            self._set_busy(False)
+            self._message(config.APP_NAME, reply)
+            task.finish(reply)
+
+        def failed(error):
+            self._error(error)
+            task.finish("The laptop action failed. Check the desktop app for details.")
+
+        self._job(lambda: self.agent.handle(task.text), done, failed)
 
     def _update_connection_indicators(self):
         has_ai_key = bool(config.FRIDAY_API_KEY.strip())
@@ -583,7 +666,7 @@ class AssistantWindow(QMainWindow):
             self.run_command(text)
 
     def run_command(self, text, command_mode=None):
-        if self.busy:
+        if self.busy or self.closing:
             return
         # Hide hero suggestion deck when real conversation proceeds to maximize space
         if self.hero_card.isVisible():
@@ -601,7 +684,7 @@ class AssistantWindow(QMainWindow):
                       lambda error: self._message("Error", f"Voice readout: {error}"))
 
     def listen(self):
-        if self.busy:
+        if self.busy or self.closing:
             return
         self._start_listening()
         self._job(listen_command, self._heard)
@@ -635,7 +718,9 @@ class AssistantWindow(QMainWindow):
         self._job(lambda: self.weather.get_weather_report(city), show, fail)
 
     def closeEvent(self, event):
-        if self.jobs:
+        if self.telegram_worker:
+            self.telegram_worker.stop()
+        if self.jobs or self.telegram_worker:
             self.closing = True
             self.status.setText("Finishing current task before closing...")
             event.ignore()

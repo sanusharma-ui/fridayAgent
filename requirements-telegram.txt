@@ -1,0 +1,3 @@
+-r requirements.txt
+# Optional local multilingual transcription of Telegram OGG/Opus voice notes.
+faster-whisper>=1.1,<2
