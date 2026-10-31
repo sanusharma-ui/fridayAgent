@@ -1,0 +1,7 @@
+PyQt5>=5.15
+vosk>=0.3.45
+sounddevice>=0.4.6
+numpy>=1.26
+pyttsx3>=2.90
+requests>=2.31.0
+python-dotenv>=1.0
