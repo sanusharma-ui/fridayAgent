@@ -52,6 +52,12 @@ Only allowed **numeric user IDs in private chats** can run tasks. Group, forward
 
 Keep the laptop awake, signed into Windows, online, and the desktop app open. AI tasks also require the Friday Colab backend to be running. Local actions can still work without Colab. If the desktop assistant is busy or a settings dialog is open, a remote task is rejected with a retry message instead of running concurrently. Telegram uses outbound [Bot API long polling](https://core.telegram.org/bots/api#getupdates); you do not need to expose a laptop port or create another ngrok tunnel.
 
+### Screenshots to Telegram
+
+Send `/screenshot`, `take a screenshot`, or `screenshot bhejo` to your bot, or use a voice note with the same request. The app captures the laptop's **primary display** and sends a photo directly to the authorized private chat that requested it. This includes whatever is visible on that display. No Friday/Colab request or extra screenshot package is needed. Voice input still needs the optional transcription packages.
+
+The screenshot stays in memory during upload; no screenshot file is saved on the laptop. Images are resized to a maximum 2560-pixel edge and sent as JPEG through Telegram's [sendPhoto API](https://core.telegram.org/bots/api#sendphoto). Keep Windows signed in and unlocked; a disconnected/locked display may fail to capture. Paused, unauthorized, forwarded and stale requests do not capture or send images. If upload fails, request a new screenshot; the app does not silently retry an old image.
+
 ## Pro UI & Keyboard Shortcuts
 
 - `Return` / `Ctrl+Return`: Send typed command

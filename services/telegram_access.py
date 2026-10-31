@@ -14,6 +14,7 @@ import requests
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from services.telegram_voice import VoiceTranscriber
+from services.screenshot import Screenshot, is_screenshot_request
 
 
 MAX_VOICE_BYTES = 10 * 1024 * 1024
@@ -75,6 +76,25 @@ class TelegramClient:
             self.call("sendMessage", {"chat_id": chat_id, "text": text[position:position + 3000],
                                       "link_preview_options": {"is_disabled": True}})
 
+    def send_photo(self, chat_id, screenshot):
+        if not isinstance(screenshot, Screenshot) or not screenshot.data or len(screenshot.data) > 9 * 1024 * 1024:
+            raise TelegramError("The captured screenshot is invalid or too large.")
+        try:
+            response = self.session.post(
+                f"https://api.telegram.org/bot{self.token}/sendPhoto",
+                data={"chat_id": chat_id, "caption": screenshot.caption},
+                files={"photo": (screenshot.filename, screenshot.data, "image/jpeg")},
+                timeout=(5, 30),
+            )
+            if response.status_code in (401, 404):
+                raise TelegramError("Telegram rejected the bot token. Check Settings.", fatal=True)
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict) or not body.get("ok"):
+                raise TelegramError("Telegram rejected the screenshot upload.")
+        except (requests.RequestException, ValueError):
+            raise TelegramError("Screenshot upload failed. Check your connection and request a new screenshot.") from None
+
     def download_voice(self, file_id, destination):
         info = self.call("getFile", {"file_id": file_id})
         if not isinstance(info, dict):
@@ -104,7 +124,7 @@ class TelegramClient:
 
 
 class TelegramBridge:
-    def __init__(self, client, allowed_ids, execute, transcribe, stopped=None, status=None):
+    def __init__(self, client, allowed_ids, execute, transcribe, stopped=None, status=None, capture=None):
         self.client = client
         self.allowed_ids = frozenset(allowed_ids)
         self.execute = execute
@@ -113,6 +133,7 @@ class TelegramBridge:
         self.status = status or (lambda text: None)
         self.paused = False
         self.offset = 0
+        self.capture = capture
 
     def run(self):
         try:
@@ -170,7 +191,7 @@ class TelegramBridge:
             self.client.send(chat_id, "Forwarded messages are not executed. Please send your own request directly.")
             return
         if text in ("/start", "/help"):
-            self.client.send(chat_id, "Connected to your laptop agent. Send text or a voice note (up to 60 seconds).\nExamples: open YouTube; write an essay about moons; create a PDF about space.\n/status — connection status\n/pause — pause new tasks\n/resume — allow new tasks\n/id — your user ID\nActions run on your laptop. Replies are text; generated documents remain on the laptop.")
+            self.client.send(chat_id, "Connected to your laptop agent. Send text or a voice note (up to 60 seconds).\nExamples: open YouTube; write an essay about moons; create a PDF about space.\n/screenshot — capture the laptop's primary display and send the image here\n/status — connection status\n/pause — pause new tasks\n/resume — allow new tasks\n/id — your user ID\nActions run on your laptop. Screenshots are sent as photos; other generated documents remain on the laptop.")
             return
         if text == "/pause":
             self.paused = True
@@ -188,7 +209,7 @@ class TelegramBridge:
         if self.paused:
             self.client.send(chat_id, "Telegram tasks are paused. Send /resume first.")
             return
-        if text.startswith("/"):
+        if text.startswith("/") and text != "/screenshot":
             self.client.send(chat_id, "Unknown command. Use /help or send a normal text/voice request.")
             return
         voice = message.get("voice")
@@ -227,21 +248,45 @@ class TelegramBridge:
             return
         if self.stopped.is_set():
             return
+        if is_screenshot_request(text):
+            self._send_screenshot(chat_id)
+            return
         self.client.send(chat_id, "Thinking... Working on your laptop.")
         result = self.execute(text)
         if not self.stopped.is_set():
             self.client.send(chat_id, result)
 
+    def _send_screenshot(self, chat_id):
+        if self.capture is None:
+            self.client.send(chat_id, "Screen capture is not connected. Please restart the desktop app.")
+            return
+        self.client.send(chat_id, "Capturing your laptop screen...")
+        result = self.capture()
+        if self.stopped.is_set():
+            return
+        if not isinstance(result, Screenshot):
+            self.client.send(chat_id, str(result))
+            return
+        try:
+            self.client.send_photo(chat_id, result)
+            self.status("Telegram: screenshot sent")
+        except TelegramError as exc:
+            self.status(str(exc))
+            if exc.fatal:
+                raise
+            self.client.send(chat_id, "The screenshot was captured, but upload failed. Send /screenshot to try again.")
+
 
 @dataclass
 class RemoteTask:
     text: str
+    kind: str = "agent"
     completed: threading.Event = field(default_factory=threading.Event)
     cancelled: threading.Event = field(default_factory=threading.Event)
-    result: str = ""
+    result: object = ""
 
     def finish(self, result):
-        self.result = str(result)
+        self.result = result if isinstance(result, Screenshot) else str(result)
         self.completed.set()
 
 
@@ -256,10 +301,11 @@ class TelegramWorker(QThread):
         self.client = TelegramClient(token)
         self.transcriber = VoiceTranscriber(model, language)
         self.bridge = TelegramBridge(self.client, authorized, self._execute,
-                                     self.transcriber.transcribe, self.stopped, self.status.emit)
+                                     self.transcriber.transcribe, self.stopped, self.status.emit,
+                                     capture=lambda: self._execute("Take a screenshot", kind="screenshot"))
 
-    def _execute(self, text):
-        task = RemoteTask(text)
+    def _execute(self, text, kind="agent"):
+        task = RemoteTask(text, kind=kind)
         self.task.emit(task)
         while not task.completed.wait(0.1):
             if self.stopped.is_set():

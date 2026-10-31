@@ -20,6 +20,7 @@ from services.speech_recognition import listen_command
 from services.tts_service import speak
 from services.weather import WeatherService
 from services.telegram_access import TelegramWorker
+from services.screenshot import capture_primary_screen
 from ui.settings_dialog import SettingsDialog
 from ui.styles import get_application_stylesheet, format_message_html
 
@@ -563,6 +564,16 @@ class AssistantWindow(QMainWindow):
             return
         if self.busy or self.settings_btn.isDown() or QApplication.activeModalWidget():
             task.finish("The laptop assistant is busy. Please send the request again when it is ready.")
+            return
+        if task.kind == "screenshot":
+            # QScreen/QPixmap belong to the GUI thread; the worker only uploads
+            # the resulting bytes to the already-authorized requesting chat.
+            try:
+                screenshot = capture_primary_screen()
+                self._message("Telegram", "Primary-display screenshot captured for the requesting chat.")
+                task.finish(screenshot)
+            except RuntimeError as exc:
+                task.finish(str(exc))
             return
         self.hero_card.hide()
         self._message("You (Telegram)", task.text)

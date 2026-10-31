@@ -9,12 +9,14 @@ import requests
 
 from services.telegram_access import (TelegramBridge, TelegramClient, TelegramError,
                                       MAX_VOICE_BYTES, parse_allowed_ids)
+from services.screenshot import Screenshot
 
 
 class FakeClient:
     def __init__(self):
         self.sent = []
         self.downloads = []
+        self.photos = []
 
     def send(self, chat_id, text):
         self.sent.append((chat_id, text))
@@ -22,6 +24,9 @@ class FakeClient:
     def download_voice(self, file_id, path):
         self.downloads.append(path)
         path.write_bytes(b"fake audio")
+
+    def send_photo(self, chat_id, screenshot):
+        self.photos.append((chat_id, screenshot))
 
 
 class TelegramAccessTests(unittest.TestCase):
@@ -147,6 +152,70 @@ class TelegramAccessTests(unittest.TestCase):
         for value in ("all", "123,", "-100", "@username"):
             with self.assertRaises(ValueError):
                 parse_allowed_ids(value)
+
+    def test_screenshot_sent_only_to_requesting_authorized_chat(self):
+        photo = Screenshot(b"fake-jpeg", "screenshot.jpg", "Captured")
+        self.bridge.capture = Mock(return_value=photo)
+        self.bridge.allowed_ids = {123, 456}
+        update = self.update("/screenshot")
+        self.bridge.process_update(update)
+        self.bridge.process_update(update)
+        self.bridge.capture.assert_called_once_with()
+        self.assertEqual(self.client.photos, [(123, photo)])
+        self.assertFalse(self.executed)
+
+    def test_unauthorized_and_paused_screenshots_never_capture(self):
+        self.bridge.capture = Mock()
+        self.bridge.process_update(self.update("/screenshot", user=456))
+        self.bridge.paused = True
+        self.bridge.process_update(self.update("screenshot bhejo", update_id=2))
+        self.bridge.capture.assert_not_called()
+        self.assertFalse(self.client.photos)
+
+    def test_voice_screenshot_reaches_capture_without_llm(self):
+        photo = Screenshot(b"fake-jpeg", "screenshot.jpg", "Captured")
+        self.bridge.capture = Mock(return_value=photo)
+        self.bridge.transcribe = lambda path: "take a screenshot"
+        self.bridge.process_update(self.update(voice=True))
+        self.assertEqual(self.client.photos, [(123, photo)])
+        self.assertFalse(self.executed)
+
+    def test_capture_error_is_reported_without_upload(self):
+        self.bridge.capture = Mock(return_value="Could not capture the screen")
+        self.bridge.process_update(self.update("/screenshot"))
+        self.assertEqual(self.client.sent[-1][1], "Could not capture the screen")
+        self.assertFalse(self.client.photos)
+
+    def test_disconnect_after_capture_prevents_upload(self):
+        def capture():
+            self.stop.set()
+            return Screenshot(b"fake-jpeg", "screenshot.jpg", "Captured")
+        self.bridge.capture = capture
+        self.bridge.process_update(self.update("/screenshot"))
+        self.assertFalse(self.client.photos)
+
+    def test_upload_failure_reports_failure_without_recapture(self):
+        self.bridge.capture = Mock(return_value=Screenshot(b"fake-jpeg", "screen.jpg", "Captured"))
+        self.client.send_photo = Mock(side_effect=TelegramError("offline"))
+        self.bridge.process_update(self.update("/screenshot"))
+        self.bridge.capture.assert_called_once_with()
+        self.assertIn("upload failed", self.client.sent[-1][1])
+
+    def test_photo_upload_uses_multipart_and_redacts_network_errors(self):
+        token = "123:" + "x" * 30
+        session = Mock()
+        session.post.return_value.status_code = 200
+        session.post.return_value.json.return_value = {"ok": True}
+        photo = Screenshot(b"fake-jpeg", "screen.jpg", "Captured")
+        client = TelegramClient(token, session)
+        client.send_photo(123, photo)
+        kwargs = session.post.call_args.kwargs
+        self.assertEqual(kwargs["data"]["chat_id"], 123)
+        self.assertEqual(kwargs["files"]["photo"], ("screen.jpg", b"fake-jpeg", "image/jpeg"))
+        session.post.side_effect = requests.ConnectionError(token)
+        with self.assertRaises(TelegramError) as raised:
+            client.send_photo(123, photo)
+        self.assertNotIn(token, str(raised.exception))
 
 
 if __name__ == "__main__":
