@@ -1,5 +1,5 @@
 # # test_terminal.py
-# from services.task_manager import process_input
+# from backend.services.task_manager import process_input
 
 # print("Neo Assistant (Terminal Mode)")
 # print("Type 'exit' to quit.\n")
@@ -12,7 +12,7 @@
     
 #     reply = process_input(user_input)
 #     print("Neo:", reply)
-from services.task_manager import process_input
+from backend.services.task_manager import process_input
 
 print("Neo Assistant (Friday AI)")
 print("Type 'exit' to quit.\n")

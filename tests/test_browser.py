@@ -4,11 +4,11 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
-from services.agent import DesktopAgent
-from services.browser import BrowserController, BrowserError, ChromeSession, site_for_url
-from services.browser_commands import parse_browser_request, parse_click_target, parse_fill_request
-from services.commands import CommandRouter
-from services.friday_service import FridayService
+from backend.services.agent import DesktopAgent
+from backend.services.browser import BrowserController, BrowserError, ChromeSession, site_for_url
+from backend.services.browser_commands import parse_browser_request, parse_click_target, parse_fill_request
+from backend.services.commands import CommandRouter
+from backend.services.friday_service import FridayService
 
 
 class BrowserTests(unittest.TestCase):
@@ -288,7 +288,7 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(agent.handle("open youtube"), "Browser: Install Playwright")
 
     def test_english_instruction_preserves_api_contract(self):
-        with patch("services.friday_service.requests.post") as post:
+        with patch("backend.services.friday_service.requests.post") as post:
             post.return_value.status_code = 200
             post.return_value.json.return_value = {"response": "Hello"}
             service = FridayService("https://example.invalid", "test-key")

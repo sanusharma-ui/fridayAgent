@@ -4,7 +4,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt5.QtGui import QGuiApplication, QPixmap, QImage, QColor
 
-from services.screenshot import encode_screenshot, is_screenshot_request
+from backend.services.screenshot import encode_screenshot, is_screenshot_request
 
 
 class ScreenshotTests(unittest.TestCase):

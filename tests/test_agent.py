@@ -5,9 +5,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from services.agent import DesktopAgent
-from services.commands import CommandRouter, launch_program
-from services.notepad import NotepadWriter
+from backend.services.agent import DesktopAgent
+from backend.services.commands import CommandRouter, launch_program
+from backend.services.notepad import NotepadWriter
 
 
 class FakeAI:
@@ -49,14 +49,14 @@ class AgentTests(unittest.TestCase):
         self.assertFalse(self.ai.requests)
 
     def test_terminal_uses_powershell_and_separate_console(self):
-        with patch("services.commands.subprocess.Popen") as process:
+        with patch("backend.services.commands.subprocess.Popen") as process:
             router = CommandRouter(self.ai)
             result = router.handle("open terminal")
             self.assertEqual(result, "Opening terminal.")
             process.assert_called_once_with(["powershell.exe"], creationflags=subprocess.CREATE_NEW_CONSOLE)
 
     def test_gui_app_does_not_request_console(self):
-        with patch("services.commands.subprocess.Popen") as process:
+        with patch("backend.services.commands.subprocess.Popen") as process:
             launch_program("notepad.exe")
             process.assert_called_once_with(["notepad.exe"])
 

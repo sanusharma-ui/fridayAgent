@@ -1,15 +1,15 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import config
+from backend import config
 import requests
-from services.friday_service import FridayService
-from services.groq_service import GroqService
+from backend.services.friday_service import FridayService
+from backend.services.groq_service import GroqService
 
 
 class AIServiceTests(unittest.TestCase):
     def test_friday_remains_primary_when_it_succeeds(self):
-        with patch("services.friday_service.requests.post") as friday_post:
+        with patch("backend.services.friday_service.requests.post") as friday_post:
             friday_post.return_value.status_code = 200
             friday_post.return_value.json.return_value = {"response": "Friday answer"}
             with patch.object(config, "GROQ_ENABLED", True), \
@@ -28,7 +28,7 @@ class AIServiceTests(unittest.TestCase):
             }
             return response
 
-        with patch("services.friday_service.requests.post", side_effect=response_for_backend) as post:
+        with patch("backend.services.friday_service.requests.post", side_effect=response_for_backend) as post:
             with patch.object(config, "GROQ_ENABLED", True), \
                     patch.object(config, "GROQ_API_KEY", "groq-key"):
                 result = FridayService("https://friday.test", "friday-key").ask("Hello")
@@ -36,7 +36,7 @@ class AIServiceTests(unittest.TestCase):
             self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer groq-key")
 
     def test_disabled_groq_is_never_called(self):
-        with patch("services.friday_service.requests.post") as friday_post:
+        with patch("backend.services.friday_service.requests.post") as friday_post:
             friday_post.side_effect = requests.ConnectionError("offline")
             with patch.object(config, "GROQ_ENABLED", False), \
                     patch.object(config, "GROQ_API_KEY", "groq-key"):
@@ -44,7 +44,7 @@ class AIServiceTests(unittest.TestCase):
             self.assertIn("Friday is unavailable", result)
 
     def test_groq_client_uses_chat_completion_shape(self):
-        with patch("services.groq_service.requests.post") as post:
+        with patch("backend.services.groq_service.requests.post") as post:
             post.return_value.status_code = 200
             post.return_value.json.return_value = {
                 "choices": [{"message": {"content": "Answer"}}]

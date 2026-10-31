@@ -7,9 +7,9 @@ from unittest.mock import Mock
 
 import requests
 
-from services.telegram_access import (TelegramBridge, TelegramClient, TelegramError,
+from backend.services.telegram_access import (TelegramBridge, TelegramClient, TelegramError,
                                       MAX_VOICE_BYTES, parse_allowed_ids)
-from services.screenshot import Screenshot
+from backend.services.screenshot import Screenshot
 
 
 class FakeClient:

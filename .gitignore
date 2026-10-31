@@ -3,3 +3,10 @@
 !.env.example
 __pycache__/
 *.py[cod]
+
+node_modules/
+sunday/dist/
+sunday/dist-electron/
+sunday/release/
+sunday/test-results/
+sunday/playwright-report/

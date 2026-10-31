@@ -1,16 +1,5 @@
-import sys
-
-from PyQt5.QtWidgets import QApplication
-
-from ui.main_window import AssistantWindow
-
-
-def main():
-    app = QApplication(sys.argv)
-    window = AssistantWindow()
-    window.show()
-    return app.exec_()
-
+"""Compatibility launcher for SUNDAY."""
+from main import main
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
