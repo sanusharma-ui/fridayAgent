@@ -1,29 +1,54 @@
-"""Short, push-to-talk transcription with the bundled offline Vosk model."""
+"""Local English speech-to-text using the compact Whisper tiny.en checkpoint."""
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 
 
-MODEL_DIR = Path(__file__).resolve().parents[2] / "vosk-model-small-en-us-0.15" / "vosk-model-small-en-us-0.15"
-_model = None
+_WORKER = Path(__file__).with_name("whisper_worker.py")
 
 
-def listen_command(duration=6):
-    global _model
+def _transcribe_audio(audio):
+    """Run CTranslate2 outside the Qt process; its native thread pool can abort under Qt."""
+    root = _WORKER.parents[2]
+    try:
+        result = subprocess.run(
+            [sys.executable, str(_WORKER)],
+            input=np.asarray(audio, dtype="<f4").tobytes(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=root,
+            timeout=120,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Whisper took too long to transcribe this recording. Please try again.") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Could not start the isolated Whisper worker: {exc}") from exc
+
+    try:
+        response = json.loads(result.stdout.decode("utf-8").strip().splitlines()[-1])
+    except (UnicodeDecodeError, json.JSONDecodeError, IndexError) as exc:
+        detail = result.stderr.decode("utf-8", errors="replace")[-1200:].strip()
+        raise RuntimeError(
+            "Whisper worker stopped unexpectedly"
+            + (f" (exit {result.returncode})" if result.returncode else "")
+            + (f": {detail}" if detail else ".")
+        ) from exc
+    if result.returncode or "error" in response:
+        raise RuntimeError(response.get("error") or "Whisper worker exited unexpectedly.")
+    return response.get("text", "")
+
+
+def _record_audio(duration):
     try:
         import sounddevice as sd
-        from vosk import KaldiRecognizer, Model
     except ImportError as exc:
-        raise RuntimeError("Voice input needs vosk and sounddevice. Install requirements.txt.") from exc
+        raise RuntimeError("Voice input needs sounddevice. Run: python -m pip install -r requirements.txt") from exc
 
-    if not MODEL_DIR.is_dir():
-        raise RuntimeError(f"Vosk model is missing: {MODEL_DIR}")
-    if _model is None:
-        _model = Model(str(MODEL_DIR))
-
-    sample_rate = 16000
     try:
         device = sd.default.device[0]
         if device is None or device < 0:
@@ -41,17 +66,25 @@ def listen_command(duration=6):
             "allow desktop apps to access the microphone, and select a working input in Sound settings."
         ) from exc
 
-    recognizer = KaldiRecognizer(_model, sample_rate)
-    segments = []
     mono = np.asarray(audio).reshape(-1)
-    if native_rate != sample_rate and mono.size:
+    if native_rate != 16000 and mono.size:
         source_positions = np.arange(mono.size, dtype=np.float64) / native_rate
-        output_count = int(round(mono.size * sample_rate / native_rate))
-        output_positions = np.arange(output_count, dtype=np.float64) / sample_rate
-        mono = np.interp(output_positions, source_positions, mono).astype(np.int16)
-    raw = mono.astype(np.int16, copy=False).tobytes()
-    for offset in range(0, len(raw), 8000):
-        if recognizer.AcceptWaveform(raw[offset:offset + 8000]):
-            segments.append(json.loads(recognizer.Result()).get("text", ""))
-    segments.append(json.loads(recognizer.FinalResult()).get("text", ""))
-    return " ".join(segment for segment in segments if segment).strip()
+        output_count = int(round(mono.size * 16000 / native_rate))
+        output_positions = np.arange(output_count, dtype=np.float64) / 16000
+        mono = np.interp(output_positions, source_positions, mono).astype(np.float32)
+    else:
+        mono = mono.astype(np.float32)
+    mono /= 32768.0
+    return mono
+
+
+def listen_command(duration=6):
+    """Record one short utterance and transcribe it locally in English."""
+    if not 0 < duration <= 15:
+        raise ValueError("Voice recording duration must be between 0 and 15 seconds.")
+
+    audio = _record_audio(duration)
+    if not audio.size or float(np.max(np.abs(audio))) < 0.003:
+        return ""
+
+    return _transcribe_audio(audio)

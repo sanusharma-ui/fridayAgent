@@ -15,7 +15,7 @@ The key must equal the `FRIDAY_API_KEY` stored in Colab Secrets. The app loads `
 
 Groq is an optional fallback when the Colab backend is unavailable. Set `GROQ_ENABLED=true` and provide `GROQ_API_KEY` in `.env`; leave `GROQ_ENABLED=false` to prevent all Groq requests. `GROQ_MODEL` defaults to `llama-3.3-70b-versatile`. Friday remains the primary backend whenever it responds successfully.
 
-Voice input uses the bundled English Vosk model and records for six seconds after **Listen** is pressed. It works offline, though English recognition can struggle with Hindi or Hinglish. Type those commands when recognition fails. Pet voice is controlled through SUNDAY Settings > Sound & Voice (Speak, Babble, or Off). Speech bubbles show a 600-character preview; Speak mode receives the full reply and the full text remains in chat. Microphone permission and a working input device are required.
+Desktop voice input uses OpenAI Whisper tiny.en through faster-whisper: 39M parameters, English-only, and downloaded to the local Hugging Face cache on first use (about 75 MB). After that first download it transcribes locally; it does not upload recordings. **Listen (6s)** records one short command. English is the recognition language; Hindi/Hinglish speech may not transcribe correctly. Whisper inference runs in a separate Python worker so its native CPU runtime cannot terminate the Qt backend. Pet voice is controlled through SUNDAY Settings > Sound & Voice (Speak, Babble, or Off). Speech bubbles show a 600-character preview; Speak mode receives the full reply and the full text remains in chat. Microphone permission and a working input device are required.
 
 **Agent** handles typed and spoken requests. The Friday model plans supported tool calls as JSON, and the desktop app validates the tool and its arguments before running it locally. It can open apps, websites and supported files, search the web or YouTube, and create a PDF. General questions go to Friday. The Colab backend is a text generator rather than a native tool-calling API; model output may need rephrasing if it produces an invalid plan. Simple open requests also work without the backend. AI-generated text is never run as shell code. Other requests require the API key and a reachable backend described above.
 
@@ -83,7 +83,7 @@ Keep the laptop awake, signed into Windows, online, and the desktop app open. AI
 
 ### Screenshots to Telegram
 
-Send `/screenshot`, `take a screenshot`, or `screenshot bhejo` to your bot, or use a voice note with the same request. The app captures the laptop's **primary display** and sends a photo directly to the authorized private chat that requested it. This includes whatever is visible on that display. No Friday/Colab request or extra screenshot package is needed. Voice input still needs the optional transcription packages.
+Send `/screenshot`, `take a screenshot`, or `screenshot bhejo` to your bot, or use a voice note with the same request. The app captures the laptop's **primary display** and sends a photo directly to the authorized private chat that requested it. This includes whatever is visible on that display. No Friday/Colab request or extra screenshot package is needed. Desktop push-to-talk installs faster-whisper through `requirements.txt`; Telegram voice-note transcription uses the separately configured multilingual model and `requirements-telegram.txt`.
 
 The screenshot stays in memory during upload; no screenshot file is saved on the laptop. Images are resized to a maximum 2560-pixel edge and sent as JPEG through Telegram's [sendPhoto API](https://core.telegram.org/bots/api#sendphoto). Keep Windows signed in and unlocked; a disconnected/locked display may fail to capture. Paused, unauthorized, forwarded and stale requests do not capture or send images. If upload fails, request a new screenshot; the app does not silently retry an old image.
 
@@ -115,8 +115,9 @@ backend/
   services/             # agent, browser, AI, voice, Telegram, weather
 sunday/                 # pet, chat, Electron bridge and frontend assets
 tests/                  # backend regression and bridge tests
-vosk-model-small-en-us-0.15/  # existing offline model, unchanged
 ```
+
+Whisper weights are cached by Hugging Face outside the repository on first use.
 
 ## Validation and troubleshooting
 
@@ -128,6 +129,6 @@ npm.cmd test
 npx.cmd playwright test tests/e2e/backend.spec.ts
 ```
 
-If Python dependencies are missing, use the same interpreter as the launcher: `python -m pip install -r requirements.txt`. If the frontend install/build fails, the launcher stops and prints the error. If chat says disconnected, inspect the launch terminal and restart `python main.py`. An active Friday/ngrok endpoint and valid key are still required for online AI. Optional Telegram voice dependencies remain in `requirements-telegram.txt`.
+If Python dependencies are missing, use the same interpreter as the launcher: `python -m pip install -r requirements.txt`. The roughly 75 MB Whisper model downloads from Hugging Face the first time you press Listen; later voice recognition runs locally. If the frontend install/build fails, the launcher stops and prints the error. If chat says disconnected, inspect the launch terminal and restart `python main.py`. An active Friday/ngrok endpoint and valid key are still required for online AI. Optional Telegram voice dependencies remain in `requirements-telegram.txt`.
 
 The standalone Electron packaging commands in `sunday/` package the pet only; a self-contained installer bundling Python and the model is not part of this source launcher.
