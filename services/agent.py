@@ -72,10 +72,12 @@ class DesktopAgent:
             'search_web (search query), search_youtube (search query), '
             'create_pdf (document topic), write_notepad (the writing request, including its topic). '
             'browser_search (search query on the current browser site), browser_tab (tab number), '
-            'browser_result (search result number), browser_control (one of scroll_up, scroll_down, top, bottom, back, forward, refresh, new_tab, tabs, close_tab, play, pause). '
+            'browser_result (search result number), browser_click (element ref from CURRENT PAGE CONTEXT), '
+            'browser_control (one of scroll_up, scroll_down, top, bottom, back, forward, refresh, new_tab, tabs, close_tab, play, pause). '
             'For follow-up searches use browser_search unless a different site is explicitly requested. '
             'For a request to write or compose text, use write_notepad. Use up to 3 calls in requested order. '
             'Copy text arguments from the user request; browser_control uses the enum, and tab/result numbers use digits. '
+            'For a request to click a named button, link, or control, use browser_click with the matching element ref from CURRENT PAGE CONTEXT. '
             'For ordinary questions or requests for instructions return {"type":"chat"}. '
             'For missing details or unsupported actions return '
             '{"type":"clarify","message":"short question or explanation"}. '
@@ -89,6 +91,17 @@ class DesktopAgent:
             '"how do I open youtube?" -> {"type":"chat"}. '
             'User request: ' + json.dumps(request, ensure_ascii=False)
         )
+        page_context = ""
+        if self.browser:
+            try:
+                context_result = self.browser.page_context()
+                if isinstance(context_result, str):
+                    page_context = context_result
+                else:
+                    page_context = "(CURRENT PAGE CONTEXT unavailable; do not select browser_click.)"
+            except BrowserError:
+                page_context = "(CURRENT PAGE CONTEXT unavailable; do not select browser_click.)"
+        prompt += "\n\nCURRENT PAGE CONTEXT (fresh for this request; never use an old context):\n" + page_context
         response = self.ai.ask(prompt)
         if is_ai_error(response):
             return response
@@ -114,13 +127,18 @@ class DesktopAgent:
                 return "I couldn't create a valid action plan. Please rephrase your request."
             tool, argument = call.get("tool"), call.get("argument")
             allowed_tools = {"open", "open_file", "search_web", "search_youtube", "create_pdf", "write_notepad",
-                             "browser_search", "browser_control", "browser_tab", "browser_result"}
+                             "browser_search", "browser_control", "browser_tab", "browser_result", "browser_click"}
             if (not isinstance(tool, str) or tool not in allowed_tools
                     or not isinstance(argument, str) or not argument.strip()
                     or len(argument) > 300):
                 return "I couldn't verify the requested action or its details. Please be more specific."
             argument = argument.strip()
-            if tool == "browser_control":
+            if tool == "browser_click":
+                grounded = (
+                    bool(re.search(r"\bclick\b", request, re.I))
+                    and bool(re.search(rf"\[{re.escape(argument)}\]", page_context))
+                )
+            elif tool == "browser_control":
                 grounded = control_is_grounded(argument, request)
             elif tool in {"browser_tab", "browser_result"}:
                 number = re.fullmatch(r"[1-9][0-9]?", argument)
@@ -181,6 +199,8 @@ class DesktopAgent:
                 return self.browser.switch_tab(int(argument))
             if tool == "browser_result":
                 return self.browser.open_result(int(argument))
+            if tool == "browser_click":
+                return self.browser.click_element(argument)
             if tool == "browser_play_result":
                 return self.browser.play_result(int(argument))
         if tool == "open":

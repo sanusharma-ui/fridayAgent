@@ -4,6 +4,7 @@ from concurrent.futures import Future
 from queue import Queue
 import threading
 from urllib.parse import quote_plus, urljoin, urlparse
+import re
 
 
 class BrowserError(RuntimeError):
@@ -81,6 +82,78 @@ class ChromeSession:
         self.page.bring_to_front()
         self.page.goto(url, wait_until="domcontentloaded")
         return True
+
+    def page_context(self):
+        """Return a fresh, bounded snapshot of the active page's visible UI."""
+        page = self._active_page()
+        try:
+            snapshot = page.evaluate("""() => {
+                const visible = element => {
+                    const style = window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    return style.visibility !== 'hidden' && style.display !== 'none'
+                        && rect.width > 0 && rect.height > 0;
+                };
+                const text = element => (element.innerText || element.value || ''
+                    || element.getAttribute('aria-label') || element.title || '')
+                    .replace(/\\s+/g, ' ').trim().slice(0, 240);
+                const selector = 'a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="checkbox"],[role="menuitem"]';
+                const elements = Array.from(document.querySelectorAll(selector))
+                    .filter(visible).slice(0, 200);
+                return {
+                    title: document.title.slice(0, 200),
+                    url: location.href,
+                    body: (document.body ? document.body.innerText : '')
+                        .replace(/\\s+/g, ' ').trim().slice(0, 4000),
+                    elements: elements.map((element, index) => {
+                        const ref = `e${index + 1}`;
+                        element.setAttribute('data-neo-ref', ref);
+                        return {
+                            ref,
+                            tag: element.tagName.toLowerCase(),
+                            role: element.getAttribute('role') || '',
+                            text: text(element),
+                            href: element.href || '',
+                            placeholder: element.getAttribute('placeholder') || ''
+                        };
+                    })
+                };
+            }""")
+        except Exception:
+            raise BrowserError("Could not read the current page context. Check the page and try again.") from None
+        lines = [f"TITLE: {snapshot['title']}", f"URL: {snapshot['url']}"]
+        if snapshot["body"]:
+            lines.append(f"VISIBLE TEXT: {snapshot['body']}")
+        lines.append("INTERACTIVE ELEMENTS:")
+        for element in snapshot["elements"]:
+            details = [element["tag"]]
+            if element["role"]:
+                details.append(f"role={element['role']}")
+            if element["text"]:
+                details.append(f"text={element['text']!r}")
+            if element["placeholder"]:
+                details.append(f"placeholder={element['placeholder']!r}")
+            if element["href"]:
+                details.append(f"href={element['href'][:300]!r}")
+            lines.append(f"[{element['ref']}] " + ", ".join(details))
+        return "\n".join(lines)[:16000]
+
+    def click_element(self, reference):
+        """Click one element from a freshly generated page-context reference."""
+        if not re.fullmatch(r"e[1-9][0-9]{0,2}", str(reference)):
+            raise BrowserError("That page element reference is invalid.")
+        page = self._active_page()
+        locator = page.locator(f'[data-neo-ref="{reference}"]')
+        try:
+            if locator.count() != 1 or not locator.is_visible():
+                raise BrowserError("That page element is no longer available. Ask me to inspect the page again.")
+            locator.click()
+            page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except BrowserError:
+            raise
+        except Exception:
+            raise BrowserError("The page element could not be clicked. Ask me to inspect the current page again.") from None
+        return f"Clicked page element {reference}."
 
     def search(self, query):
         if not query.strip():
@@ -218,6 +291,10 @@ class ChromeSession:
                 return self.open_result(int(argument))
             if operation == "play_result":
                 return self.play_result(int(argument))
+            if operation == "page_context":
+                return self.page_context()
+            if operation == "click_element":
+                return self.click_element(argument)
             raise BrowserError("Unsupported browser operation.")
         except BrowserError:
             raise
@@ -294,6 +371,12 @@ class BrowserController:
 
     def play_result(self, number):
         return self._call("play_result", number)
+
+    def page_context(self):
+        return self._call("page_context")
+
+    def click_element(self, reference):
+        return self._call("click_element", reference)
 
     def close(self):
         with self._lock:

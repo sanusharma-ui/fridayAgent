@@ -75,6 +75,37 @@ class BrowserTests(unittest.TestCase):
         session.page.go_back.assert_called_once()
         ai.ask.assert_not_called()
 
+    def test_ai_receives_fresh_page_context_for_element_click(self):
+        browser = MagicMock()
+        browser.page_context.return_value = (
+            "TITLE: Example\n[e1] button, text='Continue'\n"
+        )
+        browser.click_element.return_value = "Clicked."
+        ai = MagicMock()
+        ai.ask.return_value = json.dumps({
+            "type": "tools",
+            "calls": [{"tool": "browser_click", "argument": "e1"}],
+        })
+        agent = DesktopAgent(ai, CommandRouter(ai, browser=browser))
+        result = agent.handle("click the Continue button")
+        self.assertEqual(result, "Clicked.")
+        browser.page_context.assert_called_once()
+        browser.click_element.assert_called_once_with("e1")
+        self.assertIn("CURRENT PAGE CONTEXT", ai.ask.call_args.args[0])
+
+    def test_element_click_requires_current_context_reference(self):
+        browser = MagicMock()
+        browser.page_context.return_value = "TITLE: Example\n[e2] link, text='Other'\n"
+        ai = MagicMock()
+        ai.ask.return_value = json.dumps({
+            "type": "tools",
+            "calls": [{"tool": "browser_click", "argument": "e1"}],
+        })
+        agent = DesktopAgent(ai, CommandRouter(ai, browser=browser))
+        result = agent.handle("click the Continue button")
+        self.assertIn("couldn't verify", result)
+        browser.click_element.assert_not_called()
+
     def test_actual_url_determines_search_site(self):
         session = self.session("https://www.bing.com/search?q=test")
         session.search("new query")
