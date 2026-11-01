@@ -1,0 +1,523 @@
+SUNDAY: FRONTEND-BACKEND CONNECTION AND PRESENTATION GUIDE
+========================================================
+Source-verified on: 1 November 2026
+Project: D:\AI_Assistant_PyQt5
+
+This document explains the current checkout, not a proposed architecture.
+Technical explanations are in English. A Hinglish speaking script is included.
+No credentials, personal email addresses, or tokens are included here.
+
+
+1. THE MAIN IDEA
+---------------
+SUNDAY is an Electron/React desktop interface connected to a Python assistant.
+The frontend owns the visible pet, chat panel, animations, and UI interaction.
+Python owns assistant decisions, local tools, AI requests, voice recognition,
+Gmail integration, Telegram access, weather, and backend settings.
+
+The integration has TWO different communication boundaries:
+
+A. Local desktop connection:
+   React renderer -> Electron IPC -> Electron main process -> Python stdio.
+   This uses a private child-process pipe with newline-delimited JSON.
+   It does not require a local HTTP server, WebSocket server, or open TCP port.
+
+B. Remote AI connection:
+   Python -> HTTPS POST -> Friday backend exposed through ngrok.
+   An optional configured Groq fallback can answer if Friday is unavailable.
+
+Ngrok does NOT connect the SUNDAY renderer directly to the local Python runtime.
+The local application can be connected even when the remote AI is unavailable.
+
+Presentation opening:
+"We connected an interactive Electron frontend to an existing Python assistant
+through a private, event-driven process bridge. The model interprets requests;
+validated Python services perform supported actions and report their results."
+
+
+2. ARCHITECTURE DIAGRAM
+----------------------
+
+  User types in SUNDAY chat
+            |
+            v
+  React InteractionPanel.tsx                    RENDERER PROCESS
+            |
+            | window.sunday.panel.sendUserMessage(text)
+            v
+  preload.ts: contextBridge + ipcRenderer
+            |
+            | Electron IPC
+            v
+  ipcHandlers.ts -> IntegrationHub               ELECTRON MAIN PROCESS
+            |
+            v
+  PythonBackend: child_process.spawn()
+            |
+            | stdin: JSON request + newline
+            | stdout: JSON event + newline
+            v
+  backend.runtime: QApplication + Runtime        PYTHON PROCESS
+            |
+            +--> DesktopAgent -> validated local/browser/file tools
+            |
+            +--> FridayService --HTTPS--> ngrok --> Friday /chat
+            |         +--> optional Groq fallback
+            |
+            +--> Gmail REST API, after OAuth authorization
+            |
+            +<-- Telegram long polling + voice-note transcription
+
+  Result returns through stdout -> PythonBackend -> IntegrationHub
+         -> chat message + pet status/speech events -> React UI.
+
+Desktop microphone input enters Python directly. Telegram requests also enter
+Python directly. Their transcripts are displayed in SUNDAY without executing
+those requests a second time through the chat input pipeline.
+
+
+3. STARTUP: WHAT HAPPENS AFTER `python main.py`
+--------------------------------------------
+Source: main.py
+
+1) Locate the sunday/ frontend directory and npm executable.
+2) Copy the environment and remove ELECTRON_RUN_AS_NODE if present.
+3) Set SUNDAY_PYTHON to sys.executable. This selects the Python interpreter
+   used to launch the app, rather than assuming another Python on PATH.
+4) Set SUNDAY_BACKEND_ROOT to the project root.
+5) Install frontend dependencies when the expected Electron directory is absent.
+6) Build the frontend when output files are missing or relevant sources are newer.
+7) Launch Electron and wait for it to exit.
+
+Source: sunday/electron/main.ts and pythonBackend.ts
+
+8) Electron creates its application components and IntegrationHub.
+9) Electron creates PythonBackend and calls start().
+10) PythonBackend starts the Python runtime as a child process:
+
+    spawn(pythonExecutable, ["-u", "-m", "backend.runtime"], {
+      cwd: projectRoot,
+      windowsHide: true,
+      stdio: "pipe",
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" }
+    })
+
+The snippet above summarizes the actual spawn options.
+"-u" makes Python's output unbuffered; windowsHide hides the child console.
+The separate stdin/stdout/stderr streams are the local transport and log channel.
+
+11) Python creates QApplication and Runtime, then emits {"type":"ready"}.
+12) Only after receiving ready does Electron attach its chat-message subscriber.
+    That subscription drives the frontend's integration-connected status.
+
+There are multiple processes: the Python launcher, Electron main/renderers,
+the Python backend child, and speech workers when transcription is needed.
+
+
+4. FRONTEND TO PYTHON: ONE CHAT MESSAGE
+-------------------------------------
+Example user input: "I need the app for doing sums".
+
+Step 1: InteractionPanel.tsx trims the composer text and calls:
+        window.sunday.panel.sendUserMessage(text)
+
+Step 2: preload.ts exposes the limited window.sunday API through contextBridge.
+        sendUserMessage invokes the IPC.panelUserMessage channel.
+
+Step 3: Electron's IPC handler checks the sender and input before routing it to
+        IntegrationHub.receiveUserMessage().
+
+Step 4: IntegrationHub stores/broadcasts the user message and notifies registered
+        user-message handlers. PythonBackend registered one after ready.
+
+Step 5: PythonBackend serializes a request and writes it to child.stdin:
+
+        {"type":"chat","text":"I need the app for doing sums"}
+
+        A newline terminates the JSON record.
+
+Step 6: A Python reader thread reads stdin line by line and parses each JSON
+        object. It emits Runtime.incoming, a Qt signal connected to request().
+        This transfers request handling to Qt's event-driven runtime.
+
+Step 7: Runtime validates the request. A non-empty chat string is accepted up
+        to 4000 characters. If already busy or closing, it reports that state.
+
+Step 8: Runtime.command() sets busy=True, emits the thinking state, and runs
+        agent.handle(text) in a Job derived from QThread.
+
+Step 9: The agent decides between a direct supported command, semantic planning,
+        ordinary conversation, clarification, or the email workflow.
+
+Step 10: The action result returns through the Job.done signal to Runtime.reply().
+         It clears busy, emits a message, and emits idle or error.
+
+Important distinction:
+The frontend result {delivered:true} means the chat integration has a subscriber
+and the input was dispatched. It is NOT proof that a tool finished, an email was
+sent, or a recipient received an email. The later backend result is separate.
+
+
+5. THE LOCAL PROTOCOL: JSON LINES
+--------------------------------
+Transport: private OS pipes belonging to the spawned Python process.
+Encoding: UTF-8; Python also serializes outbound Unicode using JSON escapes.
+Framing: one complete JSON object per line, followed by a newline.
+
+Electron -> Python examples:
+  {"type":"chat","text":"Open YouTube"}
+  {"type":"listen"}
+  {"type":"settings"}
+  {"type":"telegram"}
+  {"type":"weather"}
+  {"type":"shutdown"}
+
+Python -> Electron examples:
+  {"type":"ready"}
+  {"type":"state","status":"thinking"}
+  {"type":"message","role":"sunday","text":"Opening YouTube."}
+  {"type":"state","status":"idle"}
+
+Other message roles include user and system. Voice/Telegram transcripts use
+the user role. Errors and connection information can use the system role.
+These examples illustrate the protocol; they are not a log of a live action.
+
+Why newline framing?
+Pipes are byte streams, so one write is not guaranteed to equal one read chunk.
+Electron's readline interface and Python's line iteration reconstruct complete
+records. JSON escapes newlines inside text, preserving the record boundary.
+
+Why separate stderr?
+backend.runtime saves the original stdout stream for protocol events and sends
+ordinary Python stdout output to stderr. Its emit() explicitly flushes events.
+Electron forwards stderr to its own stderr. Logs therefore normally do not mix
+with structured protocol records. Malformed records are ignored by the parser.
+
+Current limitation: there are no per-request correlation IDs, durable queues,
+or automatic replay. A busy gate serializes desktop assistant work. This is a
+small single-user desktop bridge, not a distributed job-processing system.
+
+
+6. PYTHON TO CHAT, PET ANIMATION, AND SPEECH
+------------------------------------------
+Source: sunday/electron/pythonBackend.ts and integration.ts
+
+PythonBackend reads stdout lines and handles three event families:
+
+ready:
+  Mark the connection ready and subscribe to chat input.
+
+message:
+  For user transcripts, call hub.pushTranscript(). This displays the transcript
+  without notifying input handlers again, preventing duplicate execution.
+  For assistant/system text, push chat messages through the IntegrationHub.
+  Backend text is split into chunks of up to 4000 characters for the panel.
+  Assistant replies also produce a speech event for the pet integration.
+
+state:
+  Dispatch status_changed to update the pet's state.
+  When a reply has just triggered speech, idle is delayed by six seconds to
+  preserve the response animation. That delay is not an exact speech-duration
+  acknowledgement.
+
+IntegrationHub validates outgoing pet commands/events, broadcasts chat messages,
+and retains up to 200 messages in memory. Display history is not automatically
+equivalent to an unlimited history passed to the AI model.
+
+
+7. HOW NATURAL-LANGUAGE DECISIONS WORK
+-------------------------------------
+Sources: backend/services/agent.py and intent_planner.py
+
+Familiar direct commands have local fast paths. Other wording goes to a planner
+prompt that asks the configured AI provider for structured JSON, for example:
+
+  {"type":"tools","calls":[{"tool":"open","argument":"calculator"}]}
+
+The planner can also return chat, clarify, or mail.
+
+The agent validates tool names, argument types, bounds, browser references and
+the complete plan before executing it. A plan contains at most three actions.
+When literal grounding fails, a separate semantic check evaluates whether the
+proposed action follows from the user's meaning. Model approval is not a
+replacement for local structural and tool restrictions.
+
+Clarification context expires after five minutes and is scoped separately for
+desktop and Telegram users. This supports a question such as "Which app?"
+followed by "Calculator" without requiring the original sentence again.
+
+The AI does not execute arbitrary Python or shell code. It chooses among the
+implemented tools. It can still misunderstand wording; failed validation asks
+for clarification rather than claiming the requested action succeeded.
+
+Gmail has its own draft state and approval gate. A generated draft is shown to
+the user; an actual approval is required before the Gmail service sends it.
+The send result checks the exact Gmail Sent record. Sent-folder verification
+is not proof that the recipient's inbox received the email.
+
+
+8. THE REMOTE AI API CONTRACT
+-----------------------------
+Source: backend/services/friday_service.py
+
+Python sends:
+  POST {AI_ENDPOINT_URL}/chat
+  Headers:
+    x-api-key: value of FRIDAY_API_KEY
+    ngrok-skip-browser-warning: true
+  JSON body:
+    {"message":"the bounded prompt"}
+
+Expected response:
+    {"response":"model output as a string"}
+
+The client adds an English-response instruction and enforces a 4000-character
+prompt limit. HTTP timeouts are 8 seconds for connection and 90 seconds for read.
+Invalid JSON, rejected credentials, and unavailable providers produce errors.
+
+If GROQ_ENABLED is true and GROQ_API_KEY exists, Groq can be used when Friday
+returns an error. This fallback is optional, not a replacement for the local
+Electron/Python connection.
+
+Configuration is loaded by backend/config.py from the root .env. Existing
+environment variables take precedence. Never show .env during a presentation.
+Use .env.example to explain variable names without revealing real credentials.
+
+
+9. THREADS, VOICE, TELEGRAM, AND RESPONSIVENESS
+---------------------------------------------
+Why keep Qt when the visible frontend is Electron?
+QApplication still provides the backend event loop and supports native settings
+dialogs and screen capture. The pet/chat presentation belongs to Electron.
+
+Blocking assistant operations run in Job/QThread so the Qt event loop can
+continue processing signals. Runtime tracks jobs and rejects overlapping
+requests with a busy message instead of attempting concurrent tool execution.
+
+Desktop voice:
+Python owns microphone recording and wake-word monitoring. Whisper inference
+runs in a separate process to isolate native-library crashes from the Qt host.
+Recognized text enters Runtime.command(), like typed input.
+
+Telegram:
+Python polls Telegram over outbound HTTPS. Authorized private-chat text or a
+voice-note transcript becomes a RemoteTask delivered to Runtime through a Qt
+signal. The same agent processes it, with Telegram-user-scoped mail/context
+state. The result is returned to Telegram and shown in the desktop conversation.
+Telegram voice uses a separate multilingual transcription worker.
+
+No second ngrok tunnel is needed for Telegram or the local desktop bridge.
+
+
+10. SECURITY BOUNDARIES AND FAILURE HANDLING
+-------------------------------------------
+Electron renderer:
+  contextIsolation=true, nodeIntegration=false, sandbox=true.
+  The preload exposes a fixed API rather than unrestricted Node/filesystem/shell
+  access. Main-process IPC checks trusted senders and validates payloads.
+  Renderer permission requests are denied; Python owns microphone access.
+
+Backend:
+  Secrets are read from local configuration, not supplied to renderer JavaScript.
+  Sensitive form values are redacted from planner prompts where the supported
+  local form-value parser recognizes them.
+  Email sending requires a preview and approval. Telegram uses an allowlist.
+
+Connection failure:
+  Python child errors/closure clear the subscription and ready flag. Unexpected
+  termination shows a backend-stopped message and an error state. Requests are
+  not automatically replayed, which avoids silently repeating side effects.
+
+Shutdown:
+  Electron's before-quit flow requests backend.stop(). It sends shutdown and
+  closes stdin, then waits for the Python child to close. Python stops accepting
+  new work, stops voice/Telegram activity, lets tracked work finish, closes its
+  controlled browser, and quits QApplication. EOF also requests shutdown.
+
+Tradeoff:
+  The current shutdown waits for work; it has no force-kill deadline in this
+  bridge. A slow task or transcription can therefore delay exit.
+
+Do not describe these controls as a complete security sandbox for all Python
+tools. The backend still runs with the local user's operating-system privileges.
+
+
+11. FILE MAP FOR A CODE WALKTHROUGH
+----------------------------------
+main.py
+  Launch/build orchestration; Python executable and root-path environment.
+sunday/electron/main.ts
+  App startup, hub/backend creation, shutdown integration.
+sunday/src/components/InteractionPanel.tsx
+  Chat composer, sendUserMessage(), displayed messages, backend buttons.
+sunday/electron/preload.ts
+  contextBridge exposure of window.sunday.
+sunday/src/shared/ipc.ts
+  IPC identifiers, TypeScript interfaces, limits, runtime validators.
+sunday/electron/ipcHandlers.ts
+  IPC sender/payload checks and dispatch into main-process services.
+sunday/electron/integration.ts
+  IntegrationHub, message history, subscriptions, pet events, transcripts.
+sunday/electron/pythonBackend.ts
+  Child-process spawn, JSON-lines transport, ready/error/shutdown handling.
+backend/runtime.py
+  Protocol receiver, Qt signals, jobs, busy state, input/action lifecycle.
+backend/services/agent.py and intent_planner.py
+  Natural-language plans, validation, tool dispatch, clarification context.
+backend/services/friday_service.py
+  Remote /chat HTTP contract and optional fallback selection.
+backend/config.py and .env.example
+  Backend configuration loading and documented variable names.
+tests/test_runtime.py
+  Stdio runtime reply/shutdown and busy-gate regression tests.
+sunday/tests/unit/integration.test.ts
+  Frontend integration-hub unit coverage.
+
+
+12. PRESENTATION PLAN: 8-10 MINUTES
+----------------------------------
+Slide 1 - Problem and goal (45 seconds)
+  Show: SUNDAY pet/chat screenshot with credentials and private content hidden.
+  Say: "We wanted a responsive desktop companion that can use existing Python
+  capabilities, instead of rebuilding every backend tool in JavaScript."
+
+Slide 2 - Component responsibilities (60 seconds)
+  Show: React/Electron | Python runtime | Remote services.
+  Explain who owns UI, decisions, execution, and provider communication.
+  Emphasize that the interface and model service are different components.
+
+Slide 3 - Architecture diagram (90 seconds)
+  Show the diagram in section 2.
+  Trace React -> preload -> Electron main -> Python -> return events.
+  Explain the separate HTTPS arrow to Friday/ngrok.
+
+Slide 4 - Protocol and one request (90 seconds)
+  Show one chat JSON record and thinking/message/idle events from section 5.
+  Explain newline framing, stdout vs stderr, and the ready handshake.
+  Distinguish dispatch acknowledgement from completed tool execution.
+
+Slide 5 - Natural-language decisions (60 seconds)
+  Show "I need the app for doing sums" and the calculator tool plan.
+  Explain interpretation -> validation -> execution -> actual result.
+  Mention clarification and supported-tool limits.
+
+Slide 6 - Responsiveness and safety (60 seconds)
+  Show Qt jobs, busy gate, constrained preload API, and email preview approval.
+  Explain why transcript display does not rerun the action.
+
+Slide 7 - Short demonstration (90 seconds)
+  Follow the demo sequence below. Keep a recorded backup available.
+
+Slide 8 - Evidence, limitations, and future work (60 seconds)
+  State exactly what was verified. Explain that provider availability, model
+  interpretation, OS/browser state, and real delivery remain separate concerns.
+  Possible future work: request IDs, explicit cancellation, structured tool
+  result envelopes, durable diagnostics, and bounded shutdown timeouts.
+  Label future work as proposed, not already implemented.
+
+
+13. DEMO SEQUENCE AND SPEAKING SCRIPT
+-----------------------------------
+Before presenting:
+  - Start the app using python main.py and wait for backend connected.
+  - Complete dependency/model downloads beforehand.
+  - Check the configured AI provider with a harmless request.
+  - Use a clean desktop and test account if showing Telegram/Gmail.
+  - Hide .env, tokens, private messages and sensitive browser tabs.
+  - Keep screenshots/video of a successful demo as a backup.
+
+Demo A: show the bridge is connected.
+  Type "open calculator" and show the tool result.
+  Explain that this direct command can take a local fast path.
+
+Demo B: show intent-based planning.
+  Type "I need the app for doing sums".
+  Explain that the planner translates intent into an allowed tool call.
+  Do not claim this model-based example works without network access.
+
+Demo C: show feedback and clarification.
+  Ask "Could you open an app for me?" and answer the clarification if asked.
+  Point out thinking/idle transitions. Model phrasing can vary; this is not a
+  deterministic canned dialogue.
+
+Demo D, optional: draft without sending.
+  Ask for an email draft to your test address, then say "make it more polite".
+  Show the preview and cancel. A real send is unnecessary to demonstrate the
+  connection and should not be performed with an unreviewed recipient/body.
+
+Suggested Hinglish script:
+"SUNDAY ka visible interface React aur Electron mein hai. Existing assistant
+logic Python mein rakhi hai. User jab message bhejta hai, renderer direct Python
+ya remote AI ko call nahi karta. Pehle preload ki limited API se Electron main
+process tak request jaati hai. Main process us request ko JSON line banakar
+Python child process ke stdin par likhta hai.
+
+Python runtime request ko Qt signal ke through receive karta hai. Slow work
+worker thread mein hota hai. Agent user ka intent samajhta hai, supported action
+validate karta hai, aur actual service ko call karta hai. Response stdout ke
+through JSON event bankar wapas aata hai. Electron usse chat message aur pet ke
+status/speech event mein convert karta hai.
+
+Yahan ngrok ka role alag hai: Python ko remote Friday AI se connect karna.
+Frontend aur local Python ke beech private process pipe hai. Is separation se
+UI, AI provider aur action execution ki responsibilities clear rehti hain."
+
+Closing line:
+"The integration is not just displaying an AI answer. It connects user input,
+validated decisions, actual tools, and visible execution feedback across a
+controlled Electron-to-Python process boundary."
+
+
+14. LIKELY TECHNICAL QUESTIONS AND ANSWERS
+-----------------------------------------
+Q: Why not REST between Electron and Python?
+A: For this locally spawned backend, stdio avoids a listening server, local port
+   management and another local authentication layer. REST could be useful for
+   a separately hosted or multi-client backend; that is a different deployment.
+
+Q: Is this WebSocket communication?
+A: No. Electron IPC handles renderer/main communication; stdin/stdout pipes
+   carry JSON lines between Electron main and Python.
+
+Q: Is Python running inside Electron?
+A: No. Electron spawns an independent Python child process and owns its bridge.
+
+Q: Why TypeScript interfaces AND runtime validation?
+A: TypeScript helps developers at compile time. IPC and model outputs arrive
+   at runtime, so their types and allowed values must still be checked.
+
+Q: Does "connected" mean the AI provider is healthy?
+A: No. Connected describes the local integration readiness. Remote AI requests
+   can fail while the desktop bridge remains connected.
+
+Q: Can the LLM execute any command it generates?
+A: No. The application accepts a constrained tool plan and performs validation.
+   Unsupported tools or unverified arguments do not become shell commands.
+
+Q: How are duplicate voice actions avoided?
+A: Python executes the transcript once. Electron displays it using
+   pushTranscript(), which does not re-notify user-input handlers.
+
+Q: Does the app run multiple user actions in parallel?
+A: Slow work uses worker threads, but the runtime busy gate rejects overlapping
+   assistant requests. Threading for responsiveness is not unrestricted parallel
+   tool execution.
+
+Q: What happens if the backend crashes?
+A: Electron detects child closure, disconnects the subscription, displays an
+   error and avoids automatic request replay. The current recovery is restart.
+
+Q: What proves the architecture works?
+A: Source tracing establishes the implemented path. Runtime and integration
+   tests cover protocol/routing behavior. Earlier work also checked three live
+   synthetic natural-language plans. Those are distinct from full GUI/device
+   testing. This documentation task only inspected source and wrote this file;
+   it did not rerun the application or perform new live actions.
+
+Q: What are the current limitations?
+A: Bounded context and prompts, dependence on provider quality/network for
+   natural planning, no durable request queue/correlation protocol, no automatic
+   crash recovery, and execution limited to implemented tools. Gmail Sent
+   verification does not guarantee recipient inbox delivery.
+
+END OF DOCUMENT
