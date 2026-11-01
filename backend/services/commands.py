@@ -33,7 +33,8 @@ class CommandRouter:
         self.launch = launch or launch_program
 
     def handle(self, text: str, *, allow_planning=True) -> str:
-        mail_result = self.gmail.handle(text)
+        open_mail_site = re.fullmatch(r"\s*(?:open|launch)\s+(?:gmail|email|mail)[.!?]?\s*", text, re.I)
+        mail_result = None if open_mail_site else self.gmail.handle(text)
         if mail_result is not None:
             return mail_result
         query = " ".join(text.strip().split())

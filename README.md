@@ -31,6 +31,16 @@ To create a file, say `create file hello.txt with content Hello from SUNDAY`. Ne
 
 For weather, set `OPENWEATHER_API_KEY` in the environment. The key formerly present in source should be rotated before reuse.
 
+## Natural-language decisions
+
+You can describe the result you want in English or Hinglish instead of memorizing commands. Familiar direct commands remain quick local shortcuts. Other wording goes through the AI planner, which chooses a supported tool or asks a short clarification question. Paraphrased tool arguments receive an additional semantic check before execution; unsupported tools, invented browser refs, invalid parameters and unsafe file operations remain blocked locally.
+
+Examples: `I need the app for doing sums`, `look up lunar eclipses`, `chandra grahan ke baare mein internet par dekho`, or `take me to the page I was on earlier`. The AI can normalize app names, translate search wording and interpret browser-navigation intent. If it asks which app or topic you mean, answer naturally in the same conversation; pending clarifications expire after five minutes and are separate for the desktop and each Telegram user. This is bounded clarification context, not unlimited conversation memory.
+
+Email intentions can also be handed to the draft workflow by the general planner; sending still requires approval of an actual preview. Form values remain local and redacted from planning prompts. A request is limited to three supported actions, with the complete plan validated before execution. Natural interpretation needs a reachable configured AI provider; uncertainty or failed validation produces a clarification instead of guessing. It does not add arbitrary OS control, deletion, code execution or automatic purchases.
+
+Validation includes mocked routing regressions and three live, synthetic plan-only requests (calculator intent, Hinglish web search, and browser back navigation). Those checks do not prove all possible phrasings or execution in a real browser/device.
+
 ## Gmail: brief summaries and sending
 
 Gmail is optional and disabled by default. It uses the Gmail API with your account's OAuth permission; it does not use your Google password or the controlled browser's login. No extra Python dependencies are required.
