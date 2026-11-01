@@ -7,6 +7,7 @@ planner uses a small JSON protocol. Model output is untrusted data, never code.
 import json
 import re
 from backend.services.notepad import NotepadWriter
+from backend.services.commands import parse_file_creation_request
 from backend.services.browser import BrowserError
 from backend.services.browser_commands import parse_browser_request, parse_fill_request, parse_click_target, control_is_grounded
 from backend.services.friday_service import is_ai_error
@@ -40,6 +41,9 @@ class DesktopAgent:
         click_target = parse_click_target(request) if self.browser else None
         if click_target:
             return self.browser.click_matching(click_target)
+
+        if parse_file_creation_request(request):
+            return self.router.handle(request, allow_planning=False)
 
         # Common writing requests use the complete instruction to generate the
         # document, rather than treating the topic as the document itself.
@@ -75,7 +79,8 @@ class DesktopAgent:
             '{"type":"tools","calls":[{"tool":"TOOL","argument":"TEXT"}]}. '
             'Tools: open (named app or website), open_file (exact filename or full path), '
             'search_web (search query), search_youtube (search query), '
-            'create_pdf (document topic), write_notepad (the writing request, including its topic). '
+            'create_pdf (document topic), create_file (the complete explicit create-file request), '
+            'write_notepad (the writing request, including its topic). '
             'browser_search (search query on the current browser site), browser_tab (tab number), '
             'browser_result (search result number), browser_click (element ref from CURRENT PAGE CONTEXT), '
             'browser_fill (ordinary visible text-field ref; the value is supplied locally and never included in the AI response), '
@@ -145,7 +150,7 @@ class DesktopAgent:
             if not isinstance(call, dict):
                 return "I couldn't create a valid action plan. Please rephrase your request."
             tool, argument = call.get("tool"), call.get("argument")
-            allowed_tools = {"open", "open_file", "search_web", "search_youtube", "create_pdf", "write_notepad",
+            allowed_tools = {"open", "open_file", "search_web", "search_youtube", "create_pdf", "create_file", "write_notepad",
                              "browser_search", "browser_control", "browser_tab", "browser_result", "browser_click",
                              "browser_fill"}
             if (not isinstance(tool, str) or tool not in allowed_tools
@@ -177,6 +182,8 @@ class DesktopAgent:
                 return "I couldn't verify the requested action or its details. Please be more specific."
             if tool == "create_pdf" and not re.search(r"\bpdf\b", request, re.I):
                 return "Please confirm that you want me to create a PDF and provide its topic."
+            if tool == "create_file" and not parse_file_creation_request(argument):
+                return "Please provide a filename and content for the file."
             validated.append((tool, argument.strip()))
 
         # A conservative guard prevents a planner mistake from executing a negated
@@ -253,6 +260,8 @@ class DesktopAgent:
             return self.router.handle("search " + argument, allow_planning=False)
         if tool == "search_youtube":
             return self.router.handle("search " + argument + " on youtube", allow_planning=False)
+        if tool == "create_file":
+            return self.router._create_file_from_request(argument)
         if tool == "write_notepad":
             return self.notepad.write(request)
         return self.router._create_pdf(argument)

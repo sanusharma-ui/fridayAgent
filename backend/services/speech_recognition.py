@@ -2,13 +2,39 @@
 
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
+import threading
 
 import numpy as np
 
 
 _WORKER = Path(__file__).with_name("whisper_worker.py")
+WAKE_WORD = "hey sunday"
+WAKE_CHECK_DURATION = 2
+
+
+def wake_word_matches(text):
+    """Return whether a transcript contains the configured wake phrase."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    return WAKE_WORD in normalized
+
+
+def wake_word_loop(stop_event, paused_event, on_wake, on_error):
+    """Continuously transcribe short microphone windows until stopped."""
+    while not stop_event.is_set():
+        if paused_event.wait(0.1):
+            continue
+        try:
+            transcript = listen_command(WAKE_CHECK_DURATION)
+        except RuntimeError as exc:
+            on_error(str(exc))
+            stop_event.wait(5)
+            continue
+        if wake_word_matches(transcript):
+            paused_event.set()
+            on_wake(transcript)
 
 
 def _transcribe_audio(audio):

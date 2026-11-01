@@ -200,7 +200,7 @@ class BrowserTests(unittest.TestCase):
         first = session.page
         second = MagicMock()
         second.is_closed.return_value = False
-        second.title.return_value = "Second"
+        second.title.return_value = "Second" 
         session.context.pages = [first, second]
         with self.assertRaises(BrowserError):
             session.switch_tab(0)

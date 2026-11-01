@@ -11,7 +11,7 @@ from backend.services.agent import DesktopAgent
 from backend.services.browser import BrowserController
 from backend.services.commands import CommandRouter
 from backend.services.friday_service import FridayService, is_ai_error
-from backend.services.speech_recognition import listen_command
+from backend.services.speech_recognition import listen_command, wake_word_loop
 from backend.services.screenshot import capture_primary_screen
 from backend.services.telegram_access import TelegramWorker
 from backend.settings_dialog import SettingsDialog
@@ -32,8 +32,35 @@ class Job(QThread):
             self.done.emit(None, str(exc))
 
 
+class WakeWordListener:
+    def __init__(self, detected, error):
+        self.detected = detected
+        self.error = error
+        self.stop_event = threading.Event()
+        self.paused_event = threading.Event()
+        self.thread = threading.Thread(target=self.run, name="wake-word-listener", daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def run(self):
+        wake_word_loop(self.stop_event, self.paused_event, self.detected, self.error)
+
+    def pause(self):
+        self.paused_event.set()
+
+    def resume(self):
+        self.paused_event.clear()
+
+    def stop(self):
+        self.stop_event.set()
+        self.paused_event.clear()
+
+
 class Runtime(QObject):
     incoming = pyqtSignal(object)
+    wake_detected_signal = pyqtSignal(str)
+    wake_error_signal = pyqtSignal(str)
 
     def __init__(self, emit):
         super().__init__()
@@ -44,10 +71,14 @@ class Runtime(QObject):
         self.busy = False
         self.closing = False
         self.telegram = None
+        self.wake_detected_signal.connect(self.wake_detected)
+        self.wake_error_signal.connect(self.wake_error)
+        self.wake_listener = WakeWordListener(self.wake_detected_signal.emit, self.wake_error_signal.emit)
         self.incoming.connect(self.request)
         if config.TELEGRAM_ENABLED:
             self.toggle_telegram()
         self.emit({"type": "ready"})
+        self.wake_listener.start()
 
     def reload(self):
         self.ai = FridayService()
@@ -78,6 +109,7 @@ class Runtime(QObject):
             error = result
         self.message(error or result, "system" if error else "sunday")
         self.state("error" if error else "idle")
+        self.wake_listener.resume()
         if remote:
             remote.finish(error or result)
 
@@ -93,6 +125,19 @@ class Runtime(QObject):
             return
         self.message(text, "user")
         self.command(text)
+
+    def wake_detected(self, transcript):
+        if self.closing or self.busy:
+            self.wake_listener.resume()
+            return
+        self.message(f"Wake word detected: {transcript}", "system")
+        self.busy = True
+        self.state("listening")
+        self.job(listen_command, self.heard)
+
+    def wake_error(self, error):
+        if not self.closing:
+            self.message(f"Wake-word microphone: {error}")
 
     def request(self, request):
         if not isinstance(request, dict):
@@ -110,6 +155,7 @@ class Runtime(QObject):
             if isinstance(text, str) and text.strip() and len(text) <= 4000:
                 self.command(text.strip())
         elif kind == "listen":
+            self.wake_listener.pause()
             self.busy = True
             self.state("listening")
             self.job(listen_command, self.heard)
@@ -167,6 +213,7 @@ class Runtime(QObject):
             self.command(task.text, task)
 
     def shutdown(self):
+        self.wake_listener.stop()
         if self.telegram:
             self.telegram.stop()
         if self.jobs or self.telegram:

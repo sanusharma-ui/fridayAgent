@@ -1,4 +1,5 @@
 import unittest
+import threading
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -57,6 +58,18 @@ class SpeechRecognitionTests(unittest.TestCase):
     def test_rejects_unbounded_recording_time(self):
         with self.assertRaisesRegex(ValueError, "between 0 and 15"):
             speech.listen_command(100)
+
+    def test_wake_word_matches_punctuation_and_case(self):
+        self.assertTrue(speech.wake_word_matches("Hey, Sunday!"))
+        self.assertTrue(speech.wake_word_matches("HEY SUNDAY"))
+        self.assertFalse(speech.wake_word_matches("Sunday, tell me the weather"))
+
+    def test_wake_word_loop_pauses_after_detection(self):
+        stop = threading.Event()
+        paused = threading.Event()
+        with patch.object(speech, "listen_command", return_value="Hey Sunday"):
+            speech.wake_word_loop(stop, paused, lambda _: stop.set(), lambda _: self.fail("unexpected microphone error"))
+        self.assertTrue(paused.is_set())
 
 
 if __name__ == "__main__":

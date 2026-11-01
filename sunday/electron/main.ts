@@ -133,7 +133,7 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(() => {
-  // deny every permission request (camera, mic, notifications, …): none are needed
+  // The Python backend owns microphone access; deny renderer permission prompts.
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
 
   store = new SettingsStore();

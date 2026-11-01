@@ -8,6 +8,7 @@ from unittest.mock import patch
 from backend.services.agent import DesktopAgent
 from backend.services.commands import CommandRouter, launch_program
 from backend.services.notepad import NotepadWriter
+from backend.services.file_creator import FileCreator
 
 
 class FakeAI:
@@ -107,6 +108,31 @@ class AgentTests(unittest.TestCase):
             self.agent.handle("write exactly Hello from NEO")
             self.assertEqual(opened[0].read_text(encoding="utf-8-sig"), "Hello from NEO")
             self.assertFalse(self.ai.requests)
+
+    def test_create_file_stays_inside_configured_safe_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            router = CommandRouter(self.ai, file_creator=FileCreator(folder))
+            result = router.handle("create file hello.txt with content Hello from Friday")
+            self.assertIn("File created", result)
+            self.assertEqual(
+                (Path(folder) / "hello.txt").read_text(encoding="utf-8"),
+                "Hello from Friday",
+            )
+
+    def test_create_file_rejects_path_escape_and_existing_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            creator = FileCreator(folder)
+            self.assertIn("only be created inside", creator.create("../outside.txt", "no"))
+            (Path(folder) / "same.txt").write_text("old", encoding="utf-8")
+            self.assertIn("already exists", creator.create("same.txt", "new"))
+
+    def test_planned_create_file_uses_the_safe_creator(self):
+        self.plan(("create_file", "create file planned.txt with content Planned"))
+        with tempfile.TemporaryDirectory() as folder:
+            self.router.file_creator = FileCreator(folder)
+            result = self.agent.handle("I need you to create file planned.txt with content Planned")
+            self.assertIn("File created", result)
+            self.assertEqual((Path(folder) / "planned.txt").read_text(), "Planned")
 
     def test_generation_error_does_not_create_or_open_a_file(self):
         class FailedAI:

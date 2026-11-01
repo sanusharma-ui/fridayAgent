@@ -35,7 +35,7 @@ export class PythonBackend {
         if (event.type === "ready" && !this.stopping && !this.ready) {
           this.ready = true;
           this.unsubscribe = this.hub.panel.onUserMessage((text) => this.send({ type: "chat", text }));
-          this.hub.panel.pushMessage({ role: "system", text: "Python backend connected. Local commands are ready; AI replies use your configured provider." });
+          this.hub.panel.pushMessage({ role: "system", text: "Python backend connected. Say 'Hey Sunday' to speak, or use Listen (6s). AI replies use your configured provider." });
         } else if (event.type === "message" && typeof event.text === "string") {
           if (event.role === "user") this.hub.pushTranscript(event.text);
           else for (let offset = 0; offset < event.text.length; offset += 4000) {

@@ -11,6 +11,7 @@ from urllib.parse import quote_plus
 
 from backend.services.predefined_responses import check_predefined
 from backend.services.friday_service import is_ai_error
+from backend.services.file_creator import FileCreator
 
 
 def launch_program(program):
@@ -22,9 +23,10 @@ def launch_program(program):
 
 
 class CommandRouter:
-    def __init__(self, ai_service, open_url=None, launch=None, browser=None):
+    def __init__(self, ai_service, open_url=None, launch=None, browser=None, file_creator=None):
         self.ai = ai_service
         self.browser = browser
+        self.file_creator = file_creator or FileCreator()
         self.open_url = open_url or (browser.open_url if browser else webbrowser.open)
         self.launch = launch or launch_program
 
@@ -104,6 +106,12 @@ class CommandRouter:
         if re.search(r"\bpdf\b", normalized) and re.search(r"\b(create|make|generate|banao|banado|bana)\b", normalized):
             return "What should the PDF be about? Say, for example, 'create a PDF about solar energy'."
 
+        file_request = parse_file_creation_request(query)
+        if file_request:
+            return self._create_file(*file_request)
+        if re.search(r"\b(?:create|make|write|banao|banado|bana)\b", normalized) and re.search(r"\bfile\b", normalized):
+            return "Tell me the filename and content, for example: create file hello.txt with content Hello."
+
         file_match = re.fullmatch(r'(?:open|kholo)\s+(?:the\s+)?file\s+(.+)', query, re.IGNORECASE)
         if not file_match:
             file_match = re.fullmatch(r'(.+?)\s+file\s+(?:kholo|open karo)', query, re.IGNORECASE)
@@ -157,6 +165,15 @@ class CommandRouter:
         except (ValueError, AttributeError, TypeError):
             pass
         return None
+
+    def _create_file(self, filename, content):
+        return self.file_creator.create(filename, content)
+
+    def _create_file_from_request(self, request):
+        parsed = parse_file_creation_request(request)
+        if not parsed:
+            return "Tell me the filename and content, for example: create file hello.txt with content Hello."
+        return self._create_file(*parsed)
 
     def _open_named(self, name):
         if re.fullmatch(r'(?:https?://)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:/[^\s]*)?', name, re.IGNORECASE):
@@ -222,3 +239,22 @@ class CommandRouter:
         if not filename.exists() or filename.stat().st_size == 0:
             raise RuntimeError("Could not write the PDF file.")
         return f"PDF created: {filename}"
+
+
+def parse_file_creation_request(text):
+    """Return a filename and content only for an explicit create-file request."""
+    if not isinstance(text, str):
+        return None
+    request = text.strip()
+    patterns = (
+        r"""^(?:create|make|write|generate|banao|banado|bana\s+do)\s+(?:a\s+|an\s+)?(?:new\s+)?file\s+(?:named\s+|called\s+)?["']([^"']+)["']\s+(?:with\s+(?:the\s+)?content|containing|with\s+text)\s*[:\-]?\s*(.+)$""",
+        r"""^(?:create|make|write|generate|banao|banado|bana\s+do)\s+(?:a\s+|an\s+)?(?:new\s+)?file\s+(?:named\s+|called\s+)?([^\s]+)\s+(?:with\s+(?:the\s+)?content|containing|with\s+text)\s*[:\-]?\s*(.+)$""",
+        r"""^(?:create|make|write|generate|banao|banado|bana\s+do)\s+(?:a\s+|an\s+)?(?:new\s+)?file\s+["']([^"']+)["']\s*[:\-]\s*(.+)$""",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, request, re.IGNORECASE | re.DOTALL)
+        if match:
+            filename, content = (part.strip().strip("\"'") for part in match.groups())
+            if filename and content:
+                return filename, content
+    return None
