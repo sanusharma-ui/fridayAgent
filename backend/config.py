@@ -23,6 +23,12 @@ GROQ_API_URL = os.getenv(
 ).rstrip("/")
 BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", "chrome").strip().lower()
 
+# Gmail uses user-granted OAuth, never the account password.
+GMAIL_ENABLED = os.getenv("GMAIL_ENABLED", "false").strip().lower() == "true"
+GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID", "").strip()
+GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET", "").strip()
+GMAIL_REFRESH_TOKEN = os.getenv("GMAIL_REFRESH_TOKEN", "").strip()
+
 # Telegram access is opt-in. Keep the token in .env, never in source control.
 TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()

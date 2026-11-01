@@ -11,6 +11,7 @@ from backend.services.commands import parse_file_creation_request
 from backend.services.browser import BrowserError
 from backend.services.browser_commands import parse_browser_request, parse_fill_request, parse_click_target, control_is_grounded
 from backend.services.friday_service import is_ai_error
+from backend.services.gmail_commands import GmailCommands
 
 
 class DesktopAgent:
@@ -21,17 +22,30 @@ class DesktopAgent:
         self.router = router
         self.notepad = notepad or NotepadWriter(ai)
         self.browser = getattr(router, "browser", None)
+        self.gmail = getattr(router, "gmail", None) or GmailCommands(ai)
+        self.mail_sessions = {}
 
-    def handle(self, text):
+    def handle(self, text, mail_context="desktop"):
         try:
-            return self._handle(text)
+            return self._handle(text, mail_context)
         except BrowserError as exc:
             return f"Browser: {exc}"
 
-    def _handle(self, text):
+    def _handle(self, text, mail_context="desktop"):
         request = text.strip()
         if not request:
             return "Please type or say what you need."
+
+        mail = self.gmail
+        if mail_context != "desktop":
+            if mail_context not in self.mail_sessions:
+                if len(self.mail_sessions) >= 64:
+                    self.mail_sessions.pop(next(iter(self.mail_sessions)))
+                self.mail_sessions[mail_context] = GmailCommands(self.ai)
+            mail = self.mail_sessions[mail_context]
+        mail_result = mail.handle(request)
+        if mail_result is not None:
+            return mail_result
 
         browser_request = parse_browser_request(request) if self.browser else None
         if browser_request:

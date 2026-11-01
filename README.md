@@ -19,7 +19,7 @@ Desktop voice input uses OpenAI Whisper tiny.en through faster-whisper: 39M para
 
 **Agent** handles typed and spoken requests. The Friday model plans supported tool calls as JSON, and the desktop app validates the tool and its arguments before running it locally. It can open apps, websites and supported files, search the web or YouTube, and create a PDF. General questions go to Friday. The Colab backend is a text generator rather than a native tool-calling API; model output may need rephrasing if it produces an invalid plan. Simple open requests also work without the backend. AI-generated text is never run as shell code. Other requests require the API key and a reachable backend described above.
 
-Try `open facebook`, `open terminal`, `open file report.pdf`, `play lo-fi on youtube`, or `create a PDF about solar energy`. For files, provide a full path or an exact filename directly inside Desktop, Documents, or Downloads. Only supported document and image formats can be opened. PDF creation asks Friday to write the document and saves a new file in `Documents/NEO PDFs`; check the generated content. Opening Gmail does not send mail. Arbitrary application control, sending messages, file deletion, and running arbitrary shell commands are not wired up. The wake-word listener pauses while a command is being processed and resumes after the reply, so it does not compete with command recording.
+Try `open facebook`, `open terminal`, `open file report.pdf`, `play lo-fi on youtube`, or `create a PDF about solar energy`. For files, provide a full path or an exact filename directly inside Desktop, Documents, or Downloads. Only supported document and image formats can be opened. PDF creation asks Friday to write the document and saves a new file in `Documents/NEO PDFs`; check the generated content. Opening Gmail only opens its website; the Gmail commands below provide mail summaries and confirmed sending. Arbitrary application control, other outbound messaging, file deletion, and running arbitrary shell commands are not wired up. The wake-word listener pauses while a command is being processed and resumes after the reply, so it does not compete with command recording.
 
 You can also open installed Windows apps by their Start menu name, or say `open example.com` for a website. If multiple app names match, specify the exact name. Apps without a Start menu shortcut may not be found.
 
@@ -30,6 +30,49 @@ Say `write an essay about moons` or `write a short poem about rain in Notepad`: 
 To create a file, say `create file hello.txt with content Hello from SUNDAY`. New files are created only inside `D:\test` for now; paths outside that folder and overwriting existing files are rejected. Content is written as UTF-8, and arbitrary shell commands are not executed. This restricted location can be expanded later after the file workflow is reviewed.
 
 For weather, set `OPENWEATHER_API_KEY` in the environment. The key formerly present in source should be rotated before reuse.
+
+## Gmail: brief summaries and sending
+
+Gmail is optional and disabled by default. It uses the Gmail API with your account's OAuth permission; it does not use your Google password or the controlled browser's login. No extra Python dependencies are required.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create/select a project, enable **Gmail API**, and configure Google Auth Platform's consent screen. Add your Gmail account as a test user if the app is in Testing.
+2. Create an OAuth client of type **Web application** for the manual setup below. Add `https://developers.google.com/oauthplayground` as an authorized redirect URI.
+3. Open [Google OAuth Playground](https://developers.google.com/oauthplayground/). In its settings, select **Use your own OAuth credentials**, enter your client ID and client secret, and keep access type **Offline**. Authorize both `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.send` with the Gmail account you want the assistant to use.
+4. Exchange the authorization code for tokens. Copy the refresh token into your local `.env`, along with that same client ID and secret. Using your own OAuth credentials avoids Playground's default 24-hour refresh-token revocation.
+5. Set the following values and restart the app:
+
+   ```dotenv
+   GMAIL_ENABLED=true
+   GMAIL_CLIENT_ID=your_oauth_client_id
+   GMAIL_CLIENT_SECRET=your_oauth_client_secret
+   GMAIL_REFRESH_TOKEN=your_refresh_token
+   ```
+
+Keep `FRIDAY_API_KEY` and `AI_ENDPOINT_URL` configured for summaries and generated drafts. An enabled Groq fallback can also process this content. External OAuth apps in Testing normally receive refresh tokens that expire after seven days for Gmail scopes; reauthorize when needed. See [Google's token expiration guidance](https://developers.google.com/identity/protocols/oauth2#expiration). No Gmail API key, account password, sender-address key, or manually refreshed access token is needed: messages send from the account that authorized the refresh token.
+
+Example commands in the existing desktop chat, voice input, or authorized Telegram chat:
+
+- `read my emails` — summarize up to five inbox messages.
+- `summarize my unread 3 emails in brief` — brief summaries without marking messages as read.
+- `read my emails from person@example.com` — filter by sender.
+- `send email to person@example.com subject: Meeting body: Can we meet tomorrow at 10?` — preview your exact text.
+- `draft email to person@example.com about rescheduling our meeting` — generate a body and preview it.
+- `Send email to person@example.com Subject: Can we meet` — AI writes the missing body; no command template is required.
+- `Email person@example.com and ask if they are free for a meeting` — interpret the request and prepare an English draft.
+- `Make it shorter and more polite` or `isko thoda polite karo` — revise the current draft and show a fresh preview.
+- `Yes, send it` or `haan bhej do` — approve the current preview in the same conversation.
+- `confirm send CODE` — use the eight-character code in the preview to send that draft once, within five minutes.
+- `cancel email` — discard the pending draft.
+
+Email interpretation accepts English and Hinglish, with English drafts and replies by default. If the recipient or purpose is missing, the assistant asks a short question and keeps the conversation context for five minutes. Natural interpretation and revisions require a working AI provider; exact subject/body commands remain available without it. Recipient names are not resolved or guessed: provide the full email address when asked. Generated draft content and your instructions are sent to your configured AI provider.
+
+Drafts stay in app memory, separately for the desktop and each authorized Telegram user. A revision replaces the previous preview and invalidates its confirmation code. Inspect the full preview before approving; approval sends once and expires after five minutes. After an unrelated turn, short approval is disabled until a fresh preview; the explicit confirmation code remains available for an unchanged, unexpired draft. The model cannot call send: only your local approval of a preview can do that. Cancellation, malformed revisions, and failed sends cannot silently reuse an old approval.
+
+Reading is capped at ten messages per request; summaries use bounded message text and identify partial content. Attachments are not read or sent. Mail text and sender/subject metadata are sent to your configured AI provider for summaries, and summaries appear in the requesting chat (including Telegram). Gmail credentials are not included in AI prompts. If AI is unavailable, reading shows a short original-text preview instead. After an uncertain send result, check Gmail Sent before making another draft; the app does not retry sends automatically.
+
+After sending, the app reads back the exact Gmail message and checks its SENT label and recipient. The receipt shows the actual sender, recipient, and Gmail message ID. This verifies Gmail Sent, not arrival in the recipient's inbox. If verification is unavailable, the app reports that separately and never retries sending. For a missing incoming email, check the recipient account's Spam, All Mail, Trash, and filters, plus the sender's bounce notices.
+
+The implementation follows Google's [message listing](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list) and [MIME sending](https://developers.google.com/workspace/gmail/api/guides/sending) APIs. Local mocked tests cover the API contract and confirmation flow; account authorization and actual delivery require your configured Gmail account.
 
 ## Chrome session controls
 
@@ -73,7 +116,21 @@ Telegram text and voice notes use the same agent and supported tools as the desk
    Text requests work with the normal `requirements.txt` installation.
 3. In the laptop app, open **Backend settings > Telegram**, paste the bot token, and save. Leave **Allowed user IDs** empty for initial pairing. Click **Toggle Telegram** below the chat.
 4. Open your own bot's private chat on your phone and send `/id` **after the laptop says connected/setup only**. Copy your numeric user ID into **Backend settings > Telegram > Allowed user IDs**, save, wait for disconnection, then click **Toggle Telegram** again. An empty allowlist permits only `/id`; it never permits tasks. Add multiple trusted IDs separated by commas if needed.
-5. Send `/start`, then try `can you open YouTube for me`, or record a Telegram voice note saying `write an essay about moons`. You will see the recognized text, a thinking message, and the tool result. The desktop conversation also shows remote requests.
+5. Send `/start`, then `/voice` for recording instructions. Hold Telegram's **microphone** button, speak, and send the voice note; if the button shows a camera, tap it to switch to microphone. Say `open YouTube`, `read my unread emails` (after Gmail setup), or `explain solar energy briefly`. No "Hey Sunday" wake word is needed in Telegram. You will see `Heard: ...`, a thinking message, and a text reply. The desktop conversation also shows remote requests.
+
+For `.env` setup, use these values (the token and ID must be your own), then restart:
+
+```dotenv
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=your_botfather_token
+TELEGRAM_ALLOWED_USER_IDS=your_numeric_id_from_the_id_command
+TELEGRAM_WHISPER_MODEL=base
+TELEGRAM_VOICE_LANGUAGE=
+```
+
+Leave the language empty for auto-detection, or set `hi` for Hindi / `en` for English. Start with a short 5–10 second note. If it is misheard, send the corrected request as text. Gmail sending still requires preview confirmation: reply `Yes, send it` in the same chat, or type the displayed `confirm send CODE`.
+
+Telegram speech decoding and transcription run in a hidden separate Python process, with a five-minute timeout, so a native speech-library crash does not terminate the desktop app. The model weights are cached, but the speech process loads the model for each note. Missing dependencies, download failures, and worker crashes produce a text error. A failed transcription never reaches the agent.
 
 Settings are stored in the local ignored `.env`; equivalent variables are listed in `.env.example`. You can optionally enable automatic Telegram connection on app startup. Changing Telegram settings requires disconnecting and reconnecting. A bot can only have one polling app/webhook active; use a dedicated bot for this laptop.
 

@@ -12,6 +12,7 @@ from urllib.parse import quote_plus
 from backend.services.predefined_responses import check_predefined
 from backend.services.friday_service import is_ai_error
 from backend.services.file_creator import FileCreator
+from backend.services.gmail_commands import GmailCommands
 
 
 def launch_program(program):
@@ -25,12 +26,16 @@ def launch_program(program):
 class CommandRouter:
     def __init__(self, ai_service, open_url=None, launch=None, browser=None, file_creator=None):
         self.ai = ai_service
+        self.gmail = GmailCommands(ai_service)
         self.browser = browser
         self.file_creator = file_creator or FileCreator()
         self.open_url = open_url or (browser.open_url if browser else webbrowser.open)
         self.launch = launch or launch_program
 
     def handle(self, text: str, *, allow_planning=True) -> str:
+        mail_result = self.gmail.handle(text)
+        if mail_result is not None:
+            return mail_result
         query = " ".join(text.strip().split())
         if not query:
             return "Please type or say a command."
@@ -129,9 +134,6 @@ class CommandRouter:
                 original = re.sub(r'\s+(?:kholo|open karo|khol do)$', '', original, flags=re.IGNORECASE)
                 return self._open_file(original.strip().strip('"\''))
             return self._open_named(generic_open.group(1).strip())
-
-        if normalized.startswith(("send email", "send mail", "email to")):
-            return "I can open Gmail, but sending email is not connected yet. Please review and send it there."
 
         if re.search(r"\b(open|launch|kholo|khol|create|make|generate|banao|bana|banado|chalao|run|delete|remove|send|install|download)\b", normalized):
             if allow_planning and not re.search(r'\b(?:delete|remove|send|install|download|run)\b', normalized):

@@ -116,7 +116,8 @@ class Runtime(QObject):
     def command(self, text, remote=None):
         self.busy = True
         self.state("thinking")
-        self.job(lambda: self.agent.handle(text), lambda result, error: self.reply(result, error, remote))
+        action = (lambda: self.agent.handle(text, mail_context=f"telegram:{remote.user_id}")) if remote else (lambda: self.agent.handle(text))
+        self.job(action, lambda result, error: self.reply(result, error, remote))
 
     def heard(self, text, error):
         self.busy = False

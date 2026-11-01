@@ -124,10 +124,11 @@ class TelegramClient:
 
 
 class TelegramBridge:
-    def __init__(self, client, allowed_ids, execute, transcribe, stopped=None, status=None, capture=None):
+    def __init__(self, client, allowed_ids, execute, transcribe, stopped=None, status=None, capture=None, execute_scoped=None):
         self.client = client
         self.allowed_ids = frozenset(allowed_ids)
         self.execute = execute
+        self.execute_scoped = execute_scoped
         self.transcribe = transcribe
         self.stopped = stopped or threading.Event()
         self.status = status or (lambda text: None)
@@ -191,7 +192,20 @@ class TelegramBridge:
             self.client.send(chat_id, "Forwarded messages are not executed. Please send your own request directly.")
             return
         if text in ("/start", "/help"):
+            self.client.send(chat_id, "Voice input: record a voice note using Telegram's microphone button and send it here. Use /voice for setup and language help.")
             self.client.send(chat_id, "Connected to your laptop agent. Send text or a voice note (up to 60 seconds).\nExamples: open YouTube; search for piano music; open the first result; scroll down; go back; show tabs; write an essay about moons; create a PDF about space.\n/screenshot — capture the laptop's primary display and send the image here\n/status — connection status\n/pause — pause new tasks\n/resume — allow new tasks\n/id — your user ID\nActions run on your laptop. Screenshots are sent as photos; other generated documents remain on the laptop.")
+            return
+        if text == "/voice":
+            self.client.send(chat_id,
+                "Send a Telegram voice note using the microphone button in this private chat (up to 60 seconds / 10 MB). "
+                "If you see a camera icon, tap it to switch to the microphone.\n"
+                "I will show Heard: <transcript>, run the request on your laptop, then reply with text.\n"
+                "Examples: Open YouTube; Read my unread emails; Explain solar energy briefly.\n"
+                "Keep the laptop awake, online, and the assistant running. No wake word is needed.\n"
+                "Laptop setup: python -m pip install -r requirements-telegram.txt\n"
+                "Backend settings > Telegram: model base, language blank for auto-detection; hi for Hindi or en for English. "
+                "Hindi/Hinglish recognition can vary. Reconnect after changing settings. "
+                "The first note downloads the model; later notes use the local cache. Replies are text, not a voice call.")
             return
         if text == "/pause":
             self.paused = True
@@ -252,7 +266,7 @@ class TelegramBridge:
             self._send_screenshot(chat_id)
             return
         self.client.send(chat_id, "Thinking... Working on your laptop.")
-        result = self.execute(text)
+        result = self.execute_scoped(text, user_id) if self.execute_scoped else self.execute(text)
         if not self.stopped.is_set():
             self.client.send(chat_id, result)
 
@@ -281,6 +295,7 @@ class TelegramBridge:
 class RemoteTask:
     text: str
     kind: str = "agent"
+    user_id: int = 0
     completed: threading.Event = field(default_factory=threading.Event)
     cancelled: threading.Event = field(default_factory=threading.Event)
     result: object = ""
@@ -302,10 +317,11 @@ class TelegramWorker(QThread):
         self.transcriber = VoiceTranscriber(model, language)
         self.bridge = TelegramBridge(self.client, authorized, self._execute,
                                      self.transcriber.transcribe, self.stopped, self.status.emit,
-                                     capture=lambda: self._execute("Take a screenshot", kind="screenshot"))
+                                     capture=lambda: self._execute("Take a screenshot", kind="screenshot"),
+                                     execute_scoped=lambda text, user_id: self._execute(text, user_id=user_id))
 
-    def _execute(self, text, kind="agent"):
-        task = RemoteTask(text, kind=kind)
+    def _execute(self, text, kind="agent", user_id=0):
+        task = RemoteTask(text, kind=kind, user_id=user_id)
         self.task.emit(task)
         while not task.completed.wait(0.1):
             if self.stopped.is_set():

@@ -78,11 +78,25 @@ class TelegramAccessTests(unittest.TestCase):
         self.assertIn("Thinking", self.client.sent[0][1])
         self.assertEqual(self.client.sent[-1][1], "Action completed")
 
+    def test_scoped_dispatch_preserves_authorized_user_identity(self):
+        self.bridge.execute_scoped = Mock(return_value="Draft ready")
+        self.bridge.process_update(self.update("email Alex about a meeting"))
+        self.bridge.execute_scoped.assert_called_once_with("email Alex about a meeting", 123)
+        self.assertFalse(self.executed)
+
     def test_voice_is_transcribed_and_temp_file_removed(self):
         self.bridge.process_update(self.update(voice=True))
         self.assertEqual(self.executed, ["open youtube"])
         self.assertTrue(any("Heard: open youtube" in text for _, text in self.client.sent))
         self.assertFalse(self.client.downloads[0].exists())
+
+    def test_voice_help_is_authorized_and_does_not_execute(self):
+        self.bridge.process_update(self.update("/voice", user=456))
+        self.assertFalse(self.client.sent)
+        self.bridge.process_update(self.update("/voice", update_id=2))
+        self.assertIn("microphone", self.client.sent[-1][1])
+        self.assertIn("60 seconds", self.client.sent[-1][1])
+        self.assertFalse(self.executed)
 
     def test_voice_error_does_not_execute(self):
         self.bridge.transcribe = Mock(side_effect=RuntimeError("Install voice dependencies"))
